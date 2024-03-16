@@ -37,7 +37,7 @@ const char* getWiFiAccessPointSsid() { const char* result = "Clock"; return resu
 const char* getWiFiAccessPointPassword() { const char* result = "1029384756"; return result; };
 const IPAddress getWiFiAccessPointIp() { IPAddress result( 192, 168, 1, 1 ); return result; };
 const IPAddress getWiFiAccessPointNetMask() { IPAddress result( 255, 255, 255, 0 ); return result; };
-const uint32_t TIMEOUT_AP = 180000;
+const uint32_t TIMEOUT_AP = 120000;
 
 //wifi client configuration
 const uint8_t WIFI_SSID_MAX_LENGTH = 32;
@@ -85,8 +85,8 @@ uint8_t animationTypeNumber = 0;
 const uint16_t DELAY_SENSOR_BRIGHTNESS_UPDATE_CHECK = 100;
 const uint16_t SENSOR_BRIGHTNESS_NIGHT_LEVEL = 10;
 const uint16_t SENSOR_BRIGHTNESS_DAY_LEVEL = 350;
-const double SENSOR_BRIGHTNESS_LEVEL_HYSTERESIS = 0.12;
-const uint16_t SENSOR_BRIGHTNESS_SUSTAINED_LEVEL_HYSTERESIS_OVERRIDE_MILLIS = 15000;
+const double SENSOR_BRIGHTNESS_LEVEL_HYSTERESIS = 0.10;
+const uint16_t SENSOR_BRIGHTNESS_SUSTAINED_LEVEL_HYSTERESIS_OVERRIDE_MILLIS = 10000;
 
 //custom datetime settings (used when there is no internet connection)
 bool isCustomDateTimeSet = false;
@@ -862,8 +862,12 @@ void disconnectFromWiFi( bool erasePreviousCredentials ) {
   }
 }
 
+bool isRouterSsidProvided() {
+  return strlen(wiFiClientSsid) != 0;
+}
+
 void connectToWiFiAsync( bool isInit ) {
-  if( strlen(wiFiClientSsid) == 0 ) {
+  if( !isRouterSsidProvided() ) {
     createAccessPoint();
     return;
   }
@@ -893,7 +897,7 @@ void connectToWiFiAsync( bool isInit ) {
 
 
 void connectToWiFiSync() {
-  if( strlen(wiFiClientSsid) == 0 ) {
+  if( !isRouterSsidProvided() ) {
     createAccessPoint();
     return;
   }
@@ -1056,6 +1060,7 @@ const char* HTML_PAGE_REBOOT_ENDPOINT = "/reboot";
 const char* HTML_PAGE_TESTLED_ENDPOINT = "/testled";
 const char* HTML_PAGE_TEST_NIGHT_ENDPOINT = "/testdim";
 const char* HTML_PAGE_UPDATE_ENDPOINT = "/update";
+const char* HTML_PAGE_PING_ENDPOINT = "/ping";
 const char* HTML_PAGE_FAVICON_ENDPOINT = "/favicon.ico";
 
 const char* HTML_PAGE_WIFI_SSID_NAME = "ssid";
@@ -1143,15 +1148,28 @@ void handleWebServerGet() {
     "}).catch(e=>{"
     "});"
   "}"
+  "function pg(){"
+    "let ap=") ) + String( isApInitialized ) + String( F(";"
+    "if(!ap)return;"
+    "setInterval(()=>{"
+      "fetch('/ping').catch(e=>{"
+      "});"
+    "},60000);"
+  "}"
   "document.addEventListener(\"DOMContentLoaded\",()=>{"
     "dt();"
     "pw();"
+    "pg();"
   "});"
 "</script>") );
   addHtmlPageEnd( content );
 
   wifiWebServer.sendHeader( String( F("Content-Length") ).c_str(), String( content.length() ) );
   wifiWebServer.send( 200, getContentType( F("html") ), content );
+
+  if( isApInitialized ) { //this resets AP timeout when user loads the page in AP mode
+    apStartedMillis = millis();
+  }
 }
 
 const char HTML_PAGE_FILLUP_START[] PROGMEM = "<style>"
@@ -1461,6 +1479,10 @@ void handleWebServerGetPreview() {
   }
   response += "]";
   wifiWebServer.send( 200, getContentType( F("json") ), response );
+
+  if( isApInitialized ) { //this resets AP timeout when user loads the page in AP mode
+    apStartedMillis = millis();
+  }
 }
 
 void handleWebServerGetData() {
@@ -1478,7 +1500,10 @@ void handleWebServerGetData() {
       wifiWebServer.streamFile( file, getContentType( fileExtension ) );
       file.close();
     }
-    return;
+  }
+
+  if( isApInitialized ) { //this resets AP timeout when user loads the page in AP mode
+    apStartedMillis = millis();
   }
 }
 
@@ -1496,6 +1521,10 @@ void handleWebServerSetDate() {
   } else {
     wifiWebServer.send( 404, getContentType( F("txt") ), F("Error: 't' parameter not populated or not an epoch time with millis") );
   }
+
+  if( isApInitialized ) { //this resets AP timeout when user loads the page in AP mode
+    apStartedMillis = millis();
+  }
 }
 
 void handleWebServerGetTestNight() {
@@ -1505,11 +1534,15 @@ void handleWebServerGetTestNight() {
   addHtmlPageEnd( content );
   wifiWebServer.sendHeader( String( F("Content-Length") ).c_str(), String( content.length() ) );
   wifiWebServer.send( 200, getContentType( F("html") ), content );
-    setDisplayBrightness( displayNightModeBrightness );
-    renderDisplay();
-    delay( 6000 );
-    setDisplayBrightness( true );
-    renderDisplay();
+  setDisplayBrightness( displayNightModeBrightness );
+  renderDisplay();
+  delay( 6000 );
+  setDisplayBrightness( true );
+  renderDisplay();
+
+  if( isApInitialized ) { //this resets AP timeout when user loads the page in AP mode
+    apStartedMillis = millis();
+  }
 }
 
 void handleWebServerGetTestLeds() {
@@ -1562,6 +1595,10 @@ void handleWebServerGetTestLeds() {
   }
   display.update();
   delay( 1800 );
+
+  if( isApInitialized ) { //this resets AP timeout when user loads the page in AP mode
+    apStartedMillis = millis();
+  }
 }
 
 void handleWebServerGetReboot() {
@@ -1575,6 +1612,14 @@ void handleWebServerGetReboot() {
   ESP.restart();
 }
 
+void handleWebServerGetPing() {
+  wifiWebServer.send( 204, getContentType( F("txt") ), "" );
+
+  if( isApInitialized ) { //this resets AP timeout when user loads the page in AP mode
+    apStartedMillis = millis();
+  }
+}
+
 const uint8_t FAVICON_ICO_GZ[] PROGMEM = {
   0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x63, 0x60, 0x60, 0x04, 0x42, 0x01, 0x01, 0x26, 0x30, 0xBD, 0x81, 0x81, 0x81, 0x41, 0x0C, 0x88, 0x35, 0x80, 0x58, 0x00, 0x88, 0x15,
   0x80, 0x18, 0x24, 0x0E, 0x02, 0x0E, 0x0C, 0x08, 0xC0, 0x04, 0xC5, 0xD6, 0xD6, 0xD6, 0x0C, 0x15, 0x7F, 0x36, 0xC3, 0xC5, 0x0F, 0xF0, 0x43, 0xB0, 0xB1, 0x01, 0x04, 0x1B, 0xA0, 0x61, 0x98, 0x38,
@@ -1584,7 +1629,10 @@ const uint8_t FAVICON_ICO_GZ[] PROGMEM = {
 void handleWebServerGetFavIcon() {
   wifiWebServer.sendHeader( F("Content-Encoding"), F("gzip") );
   wifiWebServer.send_P( 200, getContentType( F("ico") ).c_str(), (const char*)FAVICON_ICO_GZ, sizeof(FAVICON_ICO_GZ) );
-  return;
+
+  if( isApInitialized ) { //this resets AP timeout when user loads the page in AP mode
+    apStartedMillis = millis();
+  }
 }
 
 void handleWebServerRedirect() {
@@ -1617,6 +1665,7 @@ void configureWebServer() {
   wifiWebServer.on( HTML_PAGE_TEST_NIGHT_ENDPOINT, HTTP_GET, handleWebServerGetTestNight );
   wifiWebServer.on( HTML_PAGE_TESTLED_ENDPOINT, HTTP_GET, handleWebServerGetTestLeds );
   wifiWebServer.on( HTML_PAGE_REBOOT_ENDPOINT, HTTP_GET, handleWebServerGetReboot );
+  wifiWebServer.on( HTML_PAGE_PING_ENDPOINT, HTTP_GET, handleWebServerGetPing );
   wifiWebServer.on( HTML_PAGE_FAVICON_ENDPOINT, HTTP_GET, handleWebServerGetFavIcon );
   wifiWebServer.onNotFound([]() {
     handleWebServerRedirect();
@@ -1669,7 +1718,7 @@ void loop() {
   brightnessProcessLoopTick();
 
   currentMillis = millis();
-  if( isApInitialized && ( calculateDiffMillis( apStartedMillis, currentMillis ) >= TIMEOUT_AP ) ) {
+  if( isApInitialized && isRouterSsidProvided() && ( calculateDiffMillis( apStartedMillis, currentMillis ) >= TIMEOUT_AP ) ) {
     shutdownAccessPoint();
     connectToWiFiSync();
   }
