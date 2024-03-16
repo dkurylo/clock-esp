@@ -1500,6 +1500,11 @@ void handleWebServerGetData() {
       wifiWebServer.streamFile( file, getContentType( fileExtension ) );
       file.close();
     }
+
+    if( isApInitialized ) { //this resets AP timeout when user loads the page in AP mode
+      apStartedMillis = millis();
+    }
+    return;
   }
 
   if( isApInitialized ) { //this resets AP timeout when user loads the page in AP mode
