@@ -1750,7 +1750,7 @@ void loop() {
   currentMillis = millis();
   if( isApInitialized && isRouterSsidProvided() && ( calculateDiffMillis( apStartedMillis, currentMillis ) >= TIMEOUT_AP ) ) {
     shutdownAccessPoint();
-    connectToWiFiSync();
+    connectToWiFiAsync( false );
   }
 
   if( /*isFirstLoopRun || */( calculateDiffMillis( previousMillisWiFiStatusCheck, currentMillis ) >= DELAY_WIFI_CONNECTION_CHECK ) ) {

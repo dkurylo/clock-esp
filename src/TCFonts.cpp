@@ -138,7 +138,7 @@ void TCFonts::initFont0( std::map<String, std::vector<uint8_t>>& font ) {
   font["301"] =  { 0b00111100,
                    0b01100110,
                    0b00000110,
-                   0b00001100,
+                   0b00011100,
                    0b00000110,
                    0b00000110,
                    0b01100110,
