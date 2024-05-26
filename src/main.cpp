@@ -876,7 +876,7 @@ void disconnectFromWiFi( bool erasePreviousCredentials ) {
     while( true ) {
       wifiStatus = WiFi.status();
       if( wifiStatus == WL_DISCONNECTED || wifiStatus == WL_IDLE_STATUS ) break;
-      delay( 500 );
+      delay( 50 );
       Serial.print( "." );
     }
     Serial.println( F(" done") );
@@ -894,24 +894,22 @@ void connectToWiFiAsync( bool isInit ) {
     return;
   }
 
-  Serial.print( String( F("Connecting to WiFi '") ) + String( wiFiClientSsid ) + "'..." );
+  Serial.println( String( F("Connecting to WiFi '") ) + String( wiFiClientSsid ) + "'..." );
   WiFi.hostname( ( String( getWiFiHostName() ) + "-" + String( ESP.getChipId() ) ).c_str() );
   WiFi.begin( wiFiClientSsid, wiFiClientPassword );
 
   if( WiFi.isConnected() ) {
     shutdownAccessPoint();
     return;
-  } else {
-    Serial.println();
   }
 
   wl_status_t wifiStatus = WiFi.status();
   if( WiFi.isConnected() ) {
-    Serial.println( String( F(" done. WiFi status: ") ) + getWiFiStatusText( wifiStatus ) );
+    Serial.println( String( F("WiFi is connected. Status: ") ) + getWiFiStatusText( wifiStatus ) );
     shutdownAccessPoint();
     forceRefreshData();
   } else if( !isInit && ( wifiStatus == WL_NO_SSID_AVAIL || wifiStatus == WL_CONNECT_FAILED || wifiStatus == WL_CONNECTION_LOST || wifiStatus == WL_IDLE_STATUS || wifiStatus == WL_DISCONNECTED ) ) {
-    Serial.println( String( F("ERROR. WiFi status: ") ) + getWiFiStatusText( wifiStatus ) );
+    Serial.println( String( F("WiFi is NOT connected. Status: ") ) + getWiFiStatusText( wifiStatus ) );
     disconnectFromWiFi( false );
     createAccessPoint();
   }
@@ -1874,7 +1872,8 @@ void loop() {
   currentMillis = millis();
   if( isApInitialized && isRouterSsidProvided() && ( calculateDiffMillis( apStartedMillis, currentMillis ) >= TIMEOUT_AP ) ) {
     shutdownAccessPoint();
-    connectToWiFiAsync( false );
+    connectToWiFiAsync( true );
+    previousMillisWiFiStatusCheck = currentMillis;
   }
 
   if( /*isFirstLoopRun || */( calculateDiffMillis( previousMillisWiFiStatusCheck, currentMillis ) >= DELAY_WIFI_CONNECTION_CHECK ) ) {
