@@ -1079,6 +1079,7 @@ const char* HTML_PAGE_DATA_ENDPOINT = "/data";
 const char* HTML_PAGE_SET_DATE_ENDPOINT = "/setdt";
 const char* HTML_PAGE_REBOOT_ENDPOINT = "/reboot";
 const char* HTML_PAGE_TESTLED_ENDPOINT = "/testled";
+const char* HTML_PAGE_RESET_ENDPOINT = "/reset";
 const char* HTML_PAGE_TEST_NIGHT_ENDPOINT = "/testdim";
 const char* HTML_PAGE_UPDATE_ENDPOINT = "/update";
 const char* HTML_PAGE_PING_ENDPOINT = "/ping";
@@ -1136,7 +1137,8 @@ void handleWebServerGet() {
   "</div>"
   "<div class=\"fx\">"
     "<span>"
-      "<span class=\"sub\">") ) + getHtmlLink( HTML_PAGE_UPDATE_ENDPOINT, F("Оновити прошивку") ) + String( F("<span class=\"i\" title=\"Поточна версія: ") ) + String( getFirmwareVersion() ) + String( F("\"></span></span>"
+      "<span class=\"sub\">") ) + getHtmlLink( HTML_PAGE_UPDATE_ENDPOINT, F("Оновити") ) + String( F("<span class=\"i\" title=\"Оновити прошивку. Поточна версія: ") ) + String( getFirmwareVersion() ) + String( F("\"></span></span>"
+      "<span class=\"sub\">") ) + getHtmlLink( HTML_PAGE_RESET_ENDPOINT, F("Відновити") ) + String( F("<span class=\"i\" title=\"Відновити до заводських налаштувань\"></span></span>"
       "<span class=\"sub\">") ) + getHtmlLink( HTML_PAGE_REBOOT_ENDPOINT, F("Перезавантажити") ) + String( F("</span>"
     "</span>"
   "</div>"
@@ -1753,6 +1755,22 @@ void handleWebServerGetTestLeds() {
   }
 }
 
+void handleWebServerGetReset() {
+  String content;
+  addHtmlPageStart( content );
+  content += getHtmlPageFillup( "9", "9" ) + String( F("<h2>Відновлюються заводські налаштування...<br>Після цього слід знову приєднати пристрій до WiFi мережі.</h2>") );
+  addHtmlPageEnd( content );
+  wifiWebServer.sendHeader( String( F("Content-Length") ).c_str(), String( content.length() ) );
+  wifiWebServer.send( 200, getContentType( F("html") ), content );
+
+  for( uint16_t eepromIndex = 0; eepromIndex <= eepromLastByteIndex; eepromIndex++ ) {
+    EEPROM.write( eepromIndex, 255 );
+  }
+  EEPROM.commit();
+  delay( 200 );
+  ESP.restart();
+}
+
 void handleWebServerGetReboot() {
   String content;
   addHtmlPageStart( content );
@@ -1816,6 +1834,7 @@ void configureWebServer() {
   wifiWebServer.on( HTML_PAGE_SET_DATE_ENDPOINT, HTTP_GET, handleWebServerSetDate );
   wifiWebServer.on( HTML_PAGE_TEST_NIGHT_ENDPOINT, HTTP_GET, handleWebServerGetTestNight );
   wifiWebServer.on( HTML_PAGE_TESTLED_ENDPOINT, HTTP_GET, handleWebServerGetTestLeds );
+  wifiWebServer.on( HTML_PAGE_RESET_ENDPOINT, HTTP_GET, handleWebServerGetReset );
   wifiWebServer.on( HTML_PAGE_REBOOT_ENDPOINT, HTTP_GET, handleWebServerGetReboot );
   wifiWebServer.on( HTML_PAGE_PING_ENDPOINT, HTTP_GET, handleWebServerGetPing );
   wifiWebServer.on( HTML_PAGE_FAVICON_ENDPOINT, HTTP_GET, handleWebServerGetFavIcon );
