@@ -888,6 +888,10 @@ bool isRouterSsidProvided() {
   return strlen(wiFiClientSsid) != 0;
 }
 
+String getFullWiFiHostName() {
+  return String( getWiFiHostName() ) + "-" + String( ESP.getChipId() );
+}
+
 void connectToWiFiAsync( bool isInit ) {
   if( !isRouterSsidProvided() ) {
     createAccessPoint();
@@ -895,7 +899,7 @@ void connectToWiFiAsync( bool isInit ) {
   }
 
   Serial.println( String( F("Connecting to WiFi '") ) + String( wiFiClientSsid ) + "'..." );
-  WiFi.hostname( ( String( getWiFiHostName() ) + "-" + String( ESP.getChipId() ) ).c_str() );
+  WiFi.hostname( getFullWiFiHostName().c_str() );
   WiFi.begin( wiFiClientSsid, wiFiClientPassword );
 
   if( WiFi.isConnected() ) {
@@ -998,8 +1002,10 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
       ".i:hover{background-color:#777;color:#DDD;}"
       ".stat{opacity:0.3;font-size:65%;border:1px solid #DDD;border-radius:4px;overflow:hidden;}"
       ".stat>span{padding:1px 4px;display:inline-block;}"
-      ".stat>span:first-of-type{background-color:#666;}"
       ".stat>span:not(:last-of-type){border-right:1px solid #DDD;}"
+      ".stat>span.lbl,.stat>span.btn{background-color:#666;}"
+      ".stat>span.btn{cursor:default;}"
+      ".stat>span.btn.on{background-color:#05C;}"
       "#exw{width:100%;display:flex;background-image:linear-gradient(-180deg,#777,#222 7% 93%,#000);}"
       "#exdw{width:calc(88% - 6px);border:2px solid #1A1A1A;padding:1px;margin:3% 6%;}"
       "#exdw .exdl{display:flex;flex-wrap:nowrap;}"
@@ -1083,6 +1089,7 @@ const char* HTML_PAGE_RESET_ENDPOINT = "/reset";
 const char* HTML_PAGE_TEST_NIGHT_ENDPOINT = "/testdim";
 const char* HTML_PAGE_UPDATE_ENDPOINT = "/update";
 const char* HTML_PAGE_PING_ENDPOINT = "/ping";
+const char* HTML_PAGE_MONITOR_ENDPOINT = "/monitor";
 const char* HTML_PAGE_FAVICON_ENDPOINT = "/favicon.ico";
 
 const char* HTML_PAGE_WIFI_SSID_NAME = "ssid";
@@ -1102,8 +1109,15 @@ const char* HTML_PAGE_BRIGHTNESS_NIGHT_NAME = "brtn";
 
 void handleWebServerGet() {
   String content;
+  content.reserve( 10500 ); //currently it's around 8500
   addHtmlPageStart( content );
-  content += String( F("<script>function ex(el){Array.from(el.parentElement.parentElement.children).forEach(ch=>{if(ch.classList.contains(\"ex\"))ch.classList.toggle(\"exon\");});}</script>"
+  content += String( F("<script>"
+    "function ex(el){"
+      "Array.from(el.parentElement.parentElement.children).forEach(ch=>{"
+        "if(ch.classList.contains(\"ex\"))ch.classList.toggle(\"exon\");"
+      "});"
+    "}"
+  "</script>"
   "<form method=\"POST\">"
   "<div class=\"fx\">"
     "<h2>Приєднатись до WiFi:</h2>"
@@ -1144,7 +1158,13 @@ void handleWebServerGet() {
   "</div>"
   "<div class=\"fx\" style=\"padding-top:0.3em;\">"
     "<span>"
-      "<div class=\"stat\"><span>Яскравість</span><span>CUR ") ) + String( analogRead(A0) ) + String( F("</span><span>AVG ") ) + String( sensorBrightnessAverage ) + String( F("</span><span>REQ ") ) + String( displayCurrentBrightness ) + String( F("</span><span>DSP ") ) + String( static_cast<uint8_t>( round( displayPreviousBrightness ) ) ) + String( F("</span></div>"
+      "<div class=\"stat\">"
+        "<span class=\"btn\" onclick=\"this.classList.toggle('on');mnt();\">Яскравість</span>"
+        "<span>CUR <span id=\"b_cur\">") ) + String( analogRead(A0) ) + String( F("</span></span>"
+        "<span>AVG <span id=\"b_avg\">") ) + String( sensorBrightnessAverage ) + String( F("</span></span>"
+        "<span>REQ <span id=\"b_req\">") ) + String( displayCurrentBrightness ) + String( F("</span></span>"
+        "<span>DSP <span id=\"b_dsp\">") ) + String( static_cast<uint8_t>( round( displayPreviousBrightness ) ) ) + String( F("</span></span>"
+      "</div>"
     "</span>"
   "</div>"
 "</div>"
@@ -1177,7 +1197,26 @@ void handleWebServerGet() {
     "setInterval(()=>{"
       "fetch('/ping').catch(e=>{"
       "});"
-    "},60000);"
+    "},30000);"
+  "}"
+  "let isMnt=false;"
+  "function mnt(){"
+    "isMnt=!isMnt;"
+    "mnf();"
+  "}"
+  "function mnf(){"
+    "if(!isMnt)return;"
+    "fetch(\"") ) + String( HTML_PAGE_MONITOR_ENDPOINT ) + String( F("\")"
+    ".then(resp=>resp.json())"
+    ".then(data=>{"
+      "for(const[key,value]of Object.entries(data.brt)){"
+        "document.getElementById(\"b_\"+key).innerText=value;"
+      "}"
+    "}).catch(e=>{"
+    "});"
+    "setTimeout(()=>{"
+      "mnf();"
+    "},5000);"
   "}"
   "document.addEventListener(\"DOMContentLoaded\",()=>{"
     "dt();"
@@ -1617,18 +1656,23 @@ const uint8_t ANIMATION_04[] PROGMEM = {
 void handleWebServerGetData() {
   String aniPreview = wifiWebServer.arg("p");
   if( aniPreview == "0" ) {
+    wifiWebServer.sendHeader( F("Cache-Control"), String( F("max-age=86400") ) );
     wifiWebServer.sendHeader( F("Content-Encoding"), F("gzip") );
     wifiWebServer.send_P( 200, getContentType( F("gif") ).c_str(), (const char*)ANIMATION_00, sizeof(ANIMATION_00) );
   } else if( aniPreview == "1" ) {
+    wifiWebServer.sendHeader( F("Cache-Control"), String( F("max-age=86400") ) );
     wifiWebServer.sendHeader( F("Content-Encoding"), F("gzip") );
     wifiWebServer.send_P( 200, getContentType( F("gif") ).c_str(), (const char*)ANIMATION_01, sizeof(ANIMATION_01) );
   } else if( aniPreview == "2" ) {
+    wifiWebServer.sendHeader( F("Cache-Control"), String( F("max-age=86400") ) );
     wifiWebServer.sendHeader( F("Content-Encoding"), F("gzip") );
     wifiWebServer.send_P( 200, getContentType( F("gif") ).c_str(), (const char*)ANIMATION_02, sizeof(ANIMATION_02) );
   } else if( aniPreview == "3" ) {
+    wifiWebServer.sendHeader( F("Cache-Control"), String( F("max-age=86400") ) );
     wifiWebServer.sendHeader( F("Content-Encoding"), F("gzip") );
     wifiWebServer.send_P( 200, getContentType( F("gif") ).c_str(), (const char*)ANIMATION_03, sizeof(ANIMATION_03) );
   } else if( aniPreview == "4" ) {
+    wifiWebServer.sendHeader( F("Cache-Control"), String( F("max-age=86400") ) );
     wifiWebServer.sendHeader( F("Content-Encoding"), F("gzip") );
     wifiWebServer.send_P( 200, getContentType( F("gif") ).c_str(), (const char*)ANIMATION_04, sizeof(ANIMATION_04) );
   } else {
@@ -1644,6 +1688,7 @@ void handleWebServerGetData() {
         if( fileExtensionDot != -1 ) {
             fileExtension = fileName.substring( fileExtensionDot + 1 );
         }
+        wifiWebServer.sendHeader( F("Cache-Control"), String( F("max-age=86400") ) );
         wifiWebServer.streamFile( file, getContentType( fileExtension ) );
         file.close();
       }
@@ -1790,6 +1835,26 @@ void handleWebServerGetPing() {
   }
 }
 
+void handleWebServerGetMonitor() {
+  String content = String( F(""
+  "{"
+    "\"net\":{"
+      "\"host\":\"") ) + getFullWiFiHostName() + String( F("\""
+    "},"
+    "\"brt\":{"
+      "\"cur\":") ) + String( analogRead(A0) ) + String( F(","
+      "\"avg\":") ) + String( sensorBrightnessAverage ) + String( F(","
+      "\"req\":") ) + String( displayCurrentBrightness ) + String( F(","
+      "\"dsp\":") ) + String( static_cast<uint8_t>( round( displayPreviousBrightness ) ) ) + String( F(""
+    "},"
+    "\"ram\":{"
+      "\"heap\":\"") ) + String( ESP.getFreeHeap() ) + String( F("\","
+      "\"frag\":\"") ) + String( ESP.getHeapFragmentation() ) + String( F("\""
+    "}"
+  "}" ) );
+  wifiWebServer.send( 200, getContentType( F("json") ), content );
+}
+
 const uint8_t FAVICON_ICO_GZ[] PROGMEM = {
   0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x63, 0x60, 0x60, 0x04, 0x42, 0x01, 0x01, 0x26, 0x30, 0xBD, 0x81, 0x81, 0x81, 0x41, 0x0C, 0x88, 0x35, 0x80, 0x58, 0x00, 0x88, 0x15,
   0x80, 0x18, 0x24, 0x0E, 0x02, 0x0E, 0x0C, 0x08, 0xC0, 0x04, 0xC5, 0xD6, 0xD6, 0xD6, 0x0C, 0x15, 0x7F, 0x36, 0xC3, 0xC5, 0x0F, 0xF0, 0x43, 0xB0, 0xB1, 0x01, 0x04, 0x1B, 0xA0, 0x61, 0x98, 0x38,
@@ -1797,6 +1862,7 @@ const uint8_t FAVICON_ICO_GZ[] PROGMEM = {
 };
 
 void handleWebServerGetFavIcon() {
+  wifiWebServer.sendHeader( F("Cache-Control"), String( F("max-age=86400") ) );
   wifiWebServer.sendHeader( F("Content-Encoding"), F("gzip") );
   wifiWebServer.send_P( 200, getContentType( F("ico") ).c_str(), (const char*)FAVICON_ICO_GZ, sizeof(FAVICON_ICO_GZ) );
 
@@ -1837,6 +1903,7 @@ void configureWebServer() {
   wifiWebServer.on( HTML_PAGE_RESET_ENDPOINT, HTTP_GET, handleWebServerGetReset );
   wifiWebServer.on( HTML_PAGE_REBOOT_ENDPOINT, HTTP_GET, handleWebServerGetReboot );
   wifiWebServer.on( HTML_PAGE_PING_ENDPOINT, HTTP_GET, handleWebServerGetPing );
+  wifiWebServer.on( HTML_PAGE_MONITOR_ENDPOINT, HTTP_GET, handleWebServerGetMonitor );
   wifiWebServer.on( HTML_PAGE_FAVICON_ENDPOINT, HTTP_GET, handleWebServerGetFavIcon );
   wifiWebServer.onNotFound([]() {
     handleWebServerRedirect();
