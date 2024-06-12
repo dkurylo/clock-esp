@@ -5,7 +5,7 @@
 #ifdef ESP8266
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
-#include <ESP8266HTTPUpdateServer.h>
+#include <ESP8266HTTPUpdateServerMod.h>
 #else //ESP32 or ESP32S2
 #include <WiFi.h>
 #include <WebServer.h>

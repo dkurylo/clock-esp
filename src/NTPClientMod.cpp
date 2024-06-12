@@ -19,7 +19,7 @@
  * SOFTWARE.
  */
 
-#include "NTPClient.h"
+#include "NTPClientMod.h"
 
 NTPClient::NTPClient(UDP& udp) {
   this->_udp            = &udp;
