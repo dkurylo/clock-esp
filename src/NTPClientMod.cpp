@@ -103,7 +103,7 @@ bool NTPClient::forceUpdate() {
   } while (cb == 0);
 
   if( timeout <= 5 ) { //if response is fast assume half-trip delay between request sent and server responded
-    this->_lastUpdate = millis() - ((10 * (timeout + 1)) >> 2); // Account for delay in reading the time
+    this->_lastUpdate = millis() - ((10 * (timeout + 1)) >> 1); // Account for delay in reading the time
   } else {
     this->_lastUpdate = millis() - (10 * (timeout + 1)); // Account for delay in reading the time
   }
