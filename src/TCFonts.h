@@ -5,10 +5,12 @@
 class TCFonts {
 
   public:
-    static uint8_t getSymbolWidth( uint8_t fontIndex, char symbol, bool isBold, bool isWide, bool isSmall );
+    static uint8_t getSymbolWidth( uint8_t fontIndex, char symbol, bool isCompact, bool isWide, bool isSmall );
+    static uint8_t getSymbolLp( uint8_t fontIndex, char symbol, bool isCompact, bool isWide, bool isSmall );
+    static uint8_t getSymbolRp( uint8_t fontIndex, char symbol, bool isCompact, bool isWide, bool isSmall );
     static std::map<String, std::vector<uint8_t>> getFont( uint8_t fontIndex );
     static void setFont( uint8_t fontIndex );
-    static std::vector<uint8_t> getSymbol( std::map<String, std::vector<uint8_t>> font, char symbol, bool isBold, bool isWide, bool isSmall );
+    static std::vector<uint8_t> getSymbol( std::map<String, std::vector<uint8_t>> font, char symbol, bool isBold, bool isCompact, bool isWide, bool isSmall );
 
   private:
     static bool isFontInitialised;

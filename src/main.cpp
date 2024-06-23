@@ -71,6 +71,7 @@ char wiFiClientPassword[WIFI_PASSWORD_MAX_LENGTH];
 
 uint8_t displayFontTypeNumber = 0;
 bool isDisplayBoldFontUsed = true;
+bool isDisplayCompactLayoutUsed = false;
 bool isDisplaySecondsShown = false;
 uint8_t displayDayModeBrightness = 9;
 uint8_t displayNightModeBrightness = 1;
@@ -224,7 +225,8 @@ const uint16_t eepromIsRotateDisplayIndex = eepromIsSingleDigitHourShownIndex + 
 const uint16_t eepromIsSlowSemicolonAnimationIndex = eepromIsRotateDisplayIndex + 1;
 const uint16_t eepromIsClockAnimatedIndex = eepromIsSlowSemicolonAnimationIndex + 1;
 const uint16_t eepromAnimationTypeNumberIndex = eepromIsClockAnimatedIndex + 1;
-const uint16_t eepromLastByteIndex = eepromAnimationTypeNumberIndex + 1;
+const uint16_t eepromIsCompactLayoutShownIndex = eepromAnimationTypeNumberIndex + 1;
+const uint16_t eepromLastByteIndex = eepromIsCompactLayoutShownIndex + 1;
 
 const uint16_t EEPROM_ALLOCATED_SIZE = eepromLastByteIndex;
 void initEeprom() {
@@ -315,6 +317,7 @@ void loadEepromData() {
     readEepromBoolValue( eepromIsSlowSemicolonAnimationIndex, isSlowSemicolonAnimation, true );
     readEepromBoolValue( eepromIsClockAnimatedIndex, isClockAnimated, true );
     readEepromIntValue( eepromAnimationTypeNumberIndex, animationTypeNumber, true );
+    readEepromBoolValue( eepromIsCompactLayoutShownIndex, isDisplayCompactLayoutUsed, true );
 
   } else { //fill EEPROM with default values when starting the new board
     writeEepromBoolValue( eepromIsNewBoardIndex, false );
@@ -331,6 +334,7 @@ void loadEepromData() {
     writeEepromBoolValue( eepromIsSlowSemicolonAnimationIndex, isSlowSemicolonAnimation );
     writeEepromBoolValue( eepromIsClockAnimatedIndex, isClockAnimated );
     writeEepromIntValue( eepromAnimationTypeNumberIndex, animationTypeNumber );
+    writeEepromBoolValue( eepromIsCompactLayoutShownIndex, isDisplayCompactLayoutUsed );
 
     isNewBoard = false;
   }
@@ -560,7 +564,7 @@ void cancelDisplayAnimation() {
 }
 
 bool isSemicolonShown = true;
-void renderDisplayText( String textToDisplayLarge, String textToDisplaySmall, bool isSecondsShown, bool doAnimate ) {
+void renderDisplayText( String hourStr, String minuteStr, String secondStr, bool doAnimate ) {
   unsigned long currentMillis = millis();
 
   char charsAnimatable[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' };
@@ -569,6 +573,9 @@ void renderDisplayText( String textToDisplayLarge, String textToDisplaySmall, bo
   if( animationTypeNumber == 0 || animationTypeNumber == 1 || animationTypeNumber == 3 ) {
     displayAnimationLengthMillis += displayAnimationStepLengthMillis;
   }
+
+  String textToDisplayLarge = hourStr + ( isSemicolonShown ? ":" : "\t" ) + minuteStr;
+  String textToDisplaySmall = secondStr;
 
   if( !doAnimate ) {
     textToDisplayLargeAnimated = "";
@@ -605,15 +612,39 @@ void renderDisplayText( String textToDisplayLarge, String textToDisplaySmall, bo
 
   uint8_t displayWidthUsed = 0;
   std::map<String, std::vector<uint8_t>> font = TCFonts::getFont( displayFontTypeNumber );
+  bool isWideTextRendered = !isDisplaySecondsShown;
 
   for( size_t charToDisplayIndex = 0; charToDisplayIndex < textToDisplayLarge.length(); ++charToDisplayIndex ) {
     char charToDisplay = textToDisplayLarge.charAt( charToDisplayIndex );
-    uint8_t charWidth = TCFonts::getSymbolWidth( displayFontTypeNumber, charToDisplay, isDisplayBoldFontUsed, !isSecondsShown, false );
-    if( displayWidthUsed + charWidth > DISPLAY_WIDTH ) {
-      charWidth = DISPLAY_WIDTH - displayWidthUsed;
+
+    uint8_t charLpWidth = TCFonts::getSymbolLp( displayFontTypeNumber, charToDisplay, isDisplayCompactLayoutUsed, isWideTextRendered, false );
+    uint8_t charWidth = TCFonts::getSymbolWidth( displayFontTypeNumber, charToDisplay, isDisplayCompactLayoutUsed, isWideTextRendered, false );
+    uint8_t charRpWidth = TCFonts::getSymbolRp( displayFontTypeNumber, charToDisplay, isDisplayCompactLayoutUsed, isWideTextRendered, false );
+
+    if( displayWidthUsed + charLpWidth > DISPLAY_WIDTH ) {
+      charLpWidth = DISPLAY_WIDTH - displayWidthUsed;
     }
+    if( displayWidthUsed + charLpWidth + charWidth > DISPLAY_WIDTH ) {
+      charWidth = DISPLAY_WIDTH - displayWidthUsed - charLpWidth;
+    }
+    if( displayWidthUsed + charLpWidth + charWidth + charRpWidth > DISPLAY_WIDTH ) {
+      charRpWidth = DISPLAY_WIDTH - displayWidthUsed - charLpWidth - charWidth;
+    }
+
     if( charWidth == 0 ) continue;
-    std::vector<uint8_t> charImage = TCFonts::getSymbol( font, charToDisplay, isDisplayBoldFontUsed, !isSecondsShown, false );
+
+    for( uint8_t charX = 0; charX < charLpWidth; ++charX ) {
+      for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
+        display.setPoint(
+          isRotateDisplay ? ( DISPLAY_HEIGHT - 1 - displayY ) : ( displayY ),
+          isRotateDisplay ? displayWidthUsed : ( DISPLAY_WIDTH - 1 - displayWidthUsed ),
+          false
+        );
+      }
+      displayWidthUsed++;
+    }
+
+    std::vector<uint8_t> charImage = TCFonts::getSymbol( font, charToDisplay, isDisplayBoldFontUsed, isDisplayCompactLayoutUsed, isWideTextRendered, false );
     std::vector<uint8_t> charImagePrevious;
     if( isDisplayAnimationInProgress ) {
       bool isAnimatable = false;
@@ -625,13 +656,13 @@ void renderDisplayText( String textToDisplayLarge, String textToDisplaySmall, bo
       if( isAnimatable && charToDisplayIndex < textToDisplayLargeAnimated.length() ) {
         char charToDisplayPrevious = textToDisplayLargeAnimated.charAt( charToDisplayIndex );
         if( charToDisplay != charToDisplayPrevious ) {
-          charImagePrevious = TCFonts::getSymbol( font, charToDisplayPrevious, isDisplayBoldFontUsed, !isSecondsShown, false );
+          charImagePrevious = TCFonts::getSymbol( font, charToDisplayPrevious, isDisplayBoldFontUsed, isDisplayCompactLayoutUsed, isWideTextRendered, false );
         }
       }
     }
 
-    for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
-      for( uint8_t charX = 0; charX < charWidth; ++charX ) {
+    for( uint8_t charX = 0; charX < charWidth; ++charX ) {
+      for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
         bool isPointEnabled = false;
         uint8_t charShiftY = DISPLAY_HEIGHT - charImage.size();
         if( displayY >= charShiftY ) {
@@ -679,104 +710,207 @@ void renderDisplayText( String textToDisplayLarge, String textToDisplaySmall, bo
         }
         display.setPoint(
           isRotateDisplay ? ( DISPLAY_HEIGHT - 1 - displayY ) : ( displayY ),
-          isRotateDisplay ? ( displayWidthUsed + charX ) : ( DISPLAY_WIDTH - 1 - ( displayWidthUsed + charX ) ),
+          isRotateDisplay ? displayWidthUsed : ( DISPLAY_WIDTH - 1 - displayWidthUsed ),
           isPointEnabled
         );
       }
+      displayWidthUsed++;
     }
-    displayWidthUsed += charWidth;
-  }
 
-  for( size_t charToDisplayIndex = 0; charToDisplayIndex < textToDisplaySmall.length(); ++charToDisplayIndex ) {
-    char charToDisplay = textToDisplaySmall.charAt( charToDisplayIndex );
-    uint8_t charWidth = TCFonts::getSymbolWidth( displayFontTypeNumber, charToDisplay, isDisplayBoldFontUsed, !isSecondsShown, true );
-    if( displayWidthUsed + charWidth > DISPLAY_WIDTH ) {
-      charWidth = DISPLAY_WIDTH - displayWidthUsed;
-    }
-    if( charWidth == 0 ) continue;
-    std::vector<uint8_t> charImage = TCFonts::getSymbol( font, charToDisplay, isDisplayBoldFontUsed, !isSecondsShown, true );
-
-    for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
-      for( uint8_t charX = 0; charX < charWidth; ++charX ) {
-        bool isPointEnabled = false;
-        uint8_t charShiftY = DISPLAY_HEIGHT - charImage.size();
-        if( displayY >= charShiftY ) {
-          uint8_t charY = displayY - charShiftY;
-          isPointEnabled = ( charImage[charY] >> ( DISPLAY_HEIGHT - 1 - charX ) ) & 1;
-        }
+    for( uint8_t charX = 0; charX < charRpWidth; ++charX ) {
+      for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
         display.setPoint(
           isRotateDisplay ? ( DISPLAY_HEIGHT - 1 - displayY ) : ( displayY ),
-          isRotateDisplay ? ( displayWidthUsed + charX ) : ( DISPLAY_WIDTH - 1 - ( displayWidthUsed + charX ) ),
-          isPointEnabled
-        );
-      }
-    }
-    displayWidthUsed += charWidth;
-  }
-
-  if( displayWidthUsed < DISPLAY_WIDTH ) { //fill the rest of the screen
-    for( uint8_t charY = 0; charY < DISPLAY_HEIGHT; ++charY ) {
-      for( uint8_t charX = 0; charX < DISPLAY_WIDTH - displayWidthUsed; ++charX ) {
-        display.setPoint(
-          isRotateDisplay ? ( DISPLAY_HEIGHT - 1 - charY ) : ( charY ),
-          isRotateDisplay ? ( displayWidthUsed + charX ) : ( DISPLAY_WIDTH - 1 - ( displayWidthUsed + charX ) ),
+          isRotateDisplay ? displayWidthUsed : ( DISPLAY_WIDTH - 1 - displayWidthUsed ),
           false
         );
       }
+      displayWidthUsed++;
+    }
+  }
+
+  if( isDisplaySecondsShown ) {
+    for( size_t charToDisplayIndex = 0; charToDisplayIndex < textToDisplaySmall.length(); ++charToDisplayIndex ) {
+      char charToDisplay = textToDisplaySmall.charAt( charToDisplayIndex );
+
+      uint8_t charLpWidth = TCFonts::getSymbolLp( displayFontTypeNumber, charToDisplay, isDisplayCompactLayoutUsed, isWideTextRendered, true );
+      uint8_t charWidth = TCFonts::getSymbolWidth( displayFontTypeNumber, charToDisplay, isDisplayCompactLayoutUsed, isWideTextRendered, true );
+      uint8_t charRpWidth = TCFonts::getSymbolRp( displayFontTypeNumber, charToDisplay, isDisplayCompactLayoutUsed, isWideTextRendered, true );
+
+      if( displayWidthUsed + charLpWidth > DISPLAY_WIDTH ) {
+        charLpWidth = DISPLAY_WIDTH - displayWidthUsed;
+      }
+      if( displayWidthUsed + charLpWidth + charWidth > DISPLAY_WIDTH ) {
+        charWidth = DISPLAY_WIDTH - displayWidthUsed - charLpWidth;
+      }
+      if( displayWidthUsed + charLpWidth + charWidth + charRpWidth > DISPLAY_WIDTH ) {
+        charRpWidth = DISPLAY_WIDTH - displayWidthUsed - charLpWidth - charWidth;
+      }
+      
+      if( charWidth == 0 ) continue;
+
+      for( uint8_t charX = 0; charX < charLpWidth; ++charX ) {
+        for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
+          display.setPoint(
+            isRotateDisplay ? ( DISPLAY_HEIGHT - 1 - displayY ) : ( displayY ),
+            isRotateDisplay ? displayWidthUsed : ( DISPLAY_WIDTH - 1 - displayWidthUsed ),
+            false
+          );
+        }
+        displayWidthUsed++;
+      }
+
+      std::vector<uint8_t> charImage = TCFonts::getSymbol( font, charToDisplay, isDisplayBoldFontUsed, isDisplayCompactLayoutUsed, isWideTextRendered, true );
+      for( uint8_t charX = 0; charX < charWidth; ++charX ) {
+        for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
+          bool isPointEnabled = false;
+          uint8_t charShiftY = DISPLAY_HEIGHT - charImage.size();
+          if( displayY >= charShiftY ) {
+            uint8_t charY = displayY - charShiftY;
+            isPointEnabled = ( charImage[charY] >> ( DISPLAY_HEIGHT - 1 - charX ) ) & 1;
+          }
+          display.setPoint(
+            isRotateDisplay ? ( DISPLAY_HEIGHT - 1 - displayY ) : ( displayY ),
+            isRotateDisplay ? displayWidthUsed : ( DISPLAY_WIDTH - 1 - displayWidthUsed ),
+            isPointEnabled
+          );
+        }
+        displayWidthUsed++;
+      }
+
+      for( uint8_t charX = 0; charX < charRpWidth; ++charX ) {
+        for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
+          display.setPoint(
+            isRotateDisplay ? ( DISPLAY_HEIGHT - 1 - displayY ) : ( displayY ),
+            isRotateDisplay ? displayWidthUsed : ( DISPLAY_WIDTH - 1 - displayWidthUsed ),
+            false
+          );
+        }
+        displayWidthUsed++;
+      }
+    }
+  }
+
+  if( displayWidthUsed < DISPLAY_WIDTH ) { //fill the rest of the screen
+    for( uint8_t charX = 0; charX < DISPLAY_WIDTH - displayWidthUsed + 1; ++charX ) {
+      for( uint8_t charY = 0; charY < DISPLAY_HEIGHT; ++charY ) {
+        display.setPoint(
+          isRotateDisplay ? ( DISPLAY_HEIGHT - 1 - charY ) : ( charY ),
+          isRotateDisplay ? displayWidthUsed : ( DISPLAY_WIDTH - 1 - displayWidthUsed ),
+          false
+        );
+      }
+      displayWidthUsed++;
     }
   }
 }
 
-std::vector<std::vector<bool>> getDisplayPreview( uint8_t fontNumber, bool isBold, bool isSecondsShown, String textToDisplayLarge, String textToDisplaySmall ) {
+std::vector<std::vector<bool>> getDisplayPreview( String hourStrPreview, String minuteStrPreview, String secondStrPreview, uint8_t fontNumberPreview, bool isBoldPreview, bool isSecondsShownPreview, bool isCompactLayoutPreview ) {
   std::vector<std::vector<bool>> preview( DISPLAY_HEIGHT, std::vector<bool>( DISPLAY_WIDTH, false ) );
 
-  uint8_t displayWidthUsed = 0;
-  std::map<String, std::vector<uint8_t>> font = TCFonts::getFont( fontNumber );
+  String textToDisplayLargePreview = hourStrPreview + ":" + minuteStrPreview;
+  String textToDisplaySmallPreview = secondStrPreview;
 
-  for( size_t charToDisplayIndex = 0; charToDisplayIndex < textToDisplayLarge.length(); ++charToDisplayIndex ) {
-    char charToDisplay = textToDisplayLarge.charAt( charToDisplayIndex );
-    uint8_t charWidth = TCFonts::getSymbolWidth( fontNumber, charToDisplay, isBold, !isSecondsShown, false );
-    if( displayWidthUsed + charWidth > DISPLAY_WIDTH ) {
-      charWidth = DISPLAY_WIDTH - displayWidthUsed;
+  uint8_t displayWidthUsed = 0;
+  std::map<String, std::vector<uint8_t>> font = TCFonts::getFont( fontNumberPreview );
+  bool isWideTextPreview = !isSecondsShownPreview;
+
+  for( size_t charToDisplayIndex = 0; charToDisplayIndex < textToDisplayLargePreview.length(); ++charToDisplayIndex ) {
+    char charToDisplay = textToDisplayLargePreview.charAt( charToDisplayIndex );
+
+    uint8_t charLpWidth = TCFonts::getSymbolLp( fontNumberPreview, charToDisplay, isCompactLayoutPreview, isWideTextPreview, false );
+    uint8_t charWidth = TCFonts::getSymbolWidth( fontNumberPreview, charToDisplay, isCompactLayoutPreview, isWideTextPreview, false );
+    uint8_t charRpWidth = TCFonts::getSymbolRp( fontNumberPreview, charToDisplay, isCompactLayoutPreview, isWideTextPreview, false );
+
+    if( displayWidthUsed + charLpWidth > DISPLAY_WIDTH ) {
+      charLpWidth = DISPLAY_WIDTH - displayWidthUsed;
     }
+    if( displayWidthUsed + charLpWidth + charWidth > DISPLAY_WIDTH ) {
+      charWidth = DISPLAY_WIDTH - displayWidthUsed - charLpWidth;
+    }
+    if( displayWidthUsed + charLpWidth + charWidth + charRpWidth > DISPLAY_WIDTH ) {
+      charRpWidth = DISPLAY_WIDTH - displayWidthUsed - charLpWidth - charWidth;
+    }
+
     if( charWidth == 0 ) continue;
 
-    std::vector<uint8_t> charImage = TCFonts::getSymbol( font, charToDisplay, isBold, !isSecondsShown, false );
-    for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
-      for( uint8_t charX = 0; charX < charWidth; ++charX ) {
+    for( uint8_t charX = 0; charX < charLpWidth; ++charX ) {
+      for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
+        preview[displayY][displayWidthUsed] = false;
+      }
+      displayWidthUsed++;
+    }
+
+    std::vector<uint8_t> charImage = TCFonts::getSymbol( font, charToDisplay, isBoldPreview, isCompactLayoutPreview, isWideTextPreview, false );
+    for( uint8_t charX = 0; charX < charWidth; ++charX ) {
+      for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
         bool isPointEnabled = false;
         uint8_t charShiftY = DISPLAY_HEIGHT - charImage.size();
         if( displayY >= charShiftY ) {
           uint8_t charY = displayY - charShiftY;
           isPointEnabled = ( charImage[charY] >> ( DISPLAY_HEIGHT - 1 - charX ) ) & 1;
         }
-        preview[displayY][displayWidthUsed+charX] = isPointEnabled;
+        preview[displayY][displayWidthUsed] = isPointEnabled;
       }
+      displayWidthUsed++;
     }
-    displayWidthUsed += charWidth;
+
+    for( uint8_t charX = 0; charX < charRpWidth; ++charX ) {
+      for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
+        preview[displayY][displayWidthUsed] = false;
+      }
+      displayWidthUsed++;
+    }
   }
 
-  for( size_t charToDisplayIndex = 0; charToDisplayIndex < textToDisplaySmall.length(); ++charToDisplayIndex ) {
-    char charToDisplay = textToDisplaySmall.charAt( charToDisplayIndex );
-    uint8_t charWidth = TCFonts::getSymbolWidth( fontNumber, charToDisplay, isBold, !isSecondsShown, true );
-    if( displayWidthUsed + charWidth > DISPLAY_WIDTH ) {
-      charWidth = DISPLAY_WIDTH - displayWidthUsed;
-    }
-    if( charWidth == 0 ) continue;
+  if( isSecondsShownPreview ) {
+    for( size_t charToDisplayIndex = 0; charToDisplayIndex < textToDisplaySmallPreview.length(); ++charToDisplayIndex ) {
+      char charToDisplay = textToDisplaySmallPreview.charAt( charToDisplayIndex );
 
-    std::vector<uint8_t> charImage = TCFonts::getSymbol( font, charToDisplay, isBold, !isSecondsShown, true );
-    for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
-      for( uint8_t charX = 0; charX < charWidth; ++charX ) {
-        bool isPointEnabled = false;
-        uint8_t charShiftY = DISPLAY_HEIGHT - charImage.size();
-        if( displayY >= charShiftY ) {
-          uint8_t charY = displayY - charShiftY;
-          isPointEnabled = ( charImage[charY] >> ( DISPLAY_HEIGHT - 1 - charX ) ) & 1;
+      uint8_t charLpWidth = TCFonts::getSymbolLp( fontNumberPreview, charToDisplay, isCompactLayoutPreview, isWideTextPreview, true );
+      uint8_t charWidth = TCFonts::getSymbolWidth( fontNumberPreview, charToDisplay, isCompactLayoutPreview, isWideTextPreview, true );
+      uint8_t charRpWidth = TCFonts::getSymbolRp( fontNumberPreview, charToDisplay, isCompactLayoutPreview, isWideTextPreview, true );
+
+      if( displayWidthUsed + charLpWidth > DISPLAY_WIDTH ) {
+        charLpWidth = DISPLAY_WIDTH - displayWidthUsed;
+      }
+      if( displayWidthUsed + charLpWidth + charWidth > DISPLAY_WIDTH ) {
+        charWidth = DISPLAY_WIDTH - displayWidthUsed - charLpWidth;
+      }
+      if( displayWidthUsed + charLpWidth + charWidth + charRpWidth > DISPLAY_WIDTH ) {
+        charRpWidth = DISPLAY_WIDTH - displayWidthUsed - charLpWidth - charWidth;
+      }
+      
+      if( charWidth == 0 ) continue;
+
+      for( uint8_t charX = 0; charX < charLpWidth; ++charX ) {
+        for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
+          preview[displayY][displayWidthUsed] = false;
         }
-        preview[displayY][displayWidthUsed + charX] = isPointEnabled;
+        displayWidthUsed++;
+      }
+
+      std::vector<uint8_t> charImage = TCFonts::getSymbol( font, charToDisplay, isBoldPreview, isCompactLayoutPreview, isWideTextPreview, true );
+      for( uint8_t charX = 0; charX < charWidth; ++charX ) {
+        for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
+          bool isPointEnabled = false;
+          uint8_t charShiftY = DISPLAY_HEIGHT - charImage.size();
+          if( displayY >= charShiftY ) {
+            uint8_t charY = displayY - charShiftY;
+            isPointEnabled = ( charImage[charY] >> ( DISPLAY_HEIGHT - 1 - charX ) ) & 1;
+          }
+          preview[displayY][displayWidthUsed] = isPointEnabled;
+        }
+        displayWidthUsed++;
+      }
+
+      for( uint8_t charX = 0; charX < charRpWidth; ++charX ) {
+        for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
+          preview[displayY][displayWidthUsed] = false;
+        }
+        displayWidthUsed++;
       }
     }
-    displayWidthUsed += charWidth;
   }
 
   return preview;
@@ -821,14 +955,9 @@ void renderDisplay() {
   if( timeCanBeCalculated() ) {
     String hourStr, minuteStr, secondStr;
     calculateTimeToShow( hourStr, minuteStr, secondStr, isSingleDigitHourShown );
-
-    String textToDisplayLarge = hourStr + ( isSemicolonShown ? ":" : "\t" ) + minuteStr;
-    String textToDisplaySmall = isDisplaySecondsShown ? secondStr : String( "" );
-    renderDisplayText( textToDisplayLarge, textToDisplaySmall, isDisplaySecondsShown, isClockAnimated );
+    renderDisplayText( hourStr, minuteStr, secondStr, isClockAnimated );
   } else {
-    String textToDisplayLarge = String( "  " ) + ( isSemicolonShown ? ":" : "\t" ) + String( "  " );
-    String textToDisplaySmall = isDisplaySecondsShown ? String( "  " ) : String( "" );
-    renderDisplayText( textToDisplayLarge, textToDisplaySmall, isDisplaySecondsShown, false );
+    renderDisplayText( "  ", "  ", "  ", false );
   }
   display.update();
 }
@@ -1079,30 +1208,17 @@ String getHtmlInput( String label, const char* type, const char* value, const ch
 const uint8_t getWiFiClientSsidNameMaxLength() { return WIFI_SSID_MAX_LENGTH - 1;}
 const uint8_t getWiFiClientSsidPasswordMaxLength() { return WIFI_PASSWORD_MAX_LENGTH - 1;}
 
-const char* HTML_PAGE_ROOT_ENDPOINT = "/";
-const char* HTML_PAGE_PREVIEW_ENDPOINT = "/preview";
-const char* HTML_PAGE_DATA_ENDPOINT = "/data";
-const char* HTML_PAGE_SET_DATE_ENDPOINT = "/setdt";
-const char* HTML_PAGE_REBOOT_ENDPOINT = "/reboot";
-const char* HTML_PAGE_TESTLED_ENDPOINT = "/testled";
-const char* HTML_PAGE_RESET_ENDPOINT = "/reset";
-const char* HTML_PAGE_TEST_NIGHT_ENDPOINT = "/testdim";
-const char* HTML_PAGE_UPDATE_ENDPOINT = "/update";
-const char* HTML_PAGE_PING_ENDPOINT = "/ping";
-const char* HTML_PAGE_MONITOR_ENDPOINT = "/monitor";
-const char* HTML_PAGE_FAVICON_ENDPOINT = "/favicon.ico";
-
 const char* HTML_PAGE_WIFI_SSID_NAME = "ssid";
 const char* HTML_PAGE_WIFI_PWD_NAME = "pwd";
-
-const char* HTML_PAGE_SHOW_SINGLE_DIGIT_HOUR_NAME = "sdh";
-const char* HTML_PAGE_CLOCK_ANIMATED_NAME = "ca";
 
 const char* HTML_PAGE_FONT_TYPE_NAME = "fnt";
 const char* HTML_PAGE_BOLD_FONT_NAME = "bld";
 const char* HTML_PAGE_SHOW_SECS_NAME = "sec";
+const char* HTML_PAGE_SHOW_SINGLE_DIGIT_HOUR_NAME = "sdh";
+const char* HTML_PAGE_COMPACT_LAYOUT_NAME = "cl";
 const char* HTML_PAGE_SLOW_SEMICOLON_ANIMATION_NAME = "ssa";
 const char* HTML_PAGE_ROTATE_DISPLAY_NAME = "rot";
+const char* HTML_PAGE_CLOCK_ANIMATED_NAME = "ca";
 const char* HTML_PAGE_ANIMATION_TYPE_NAME = "at";
 const char* HTML_PAGE_BRIGHTNESS_DAY_NAME = "brtd";
 const char* HTML_PAGE_BRIGHTNESS_NIGHT_NAME = "brtn";
@@ -1131,6 +1247,7 @@ void handleWebServerGet() {
     "<div class=\"fi pl\">") ) + getHtmlInput( F("Жирний шрифт"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_BOLD_FONT_NAME, HTML_PAGE_BOLD_FONT_NAME, 0, 0, false, isDisplayBoldFontUsed, "onchange=\"pv();\"", "" ) + String( F("</div>"
     "<div class=\"fi pl\">") ) + getHtmlInput( F("Показувати секунди"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_SHOW_SECS_NAME, HTML_PAGE_SHOW_SECS_NAME, 0, 0, false, isDisplaySecondsShown, "onchange=\"pv();\"", "" ) + String( F("</div>"
     "<div class=\"fi pl\">") ) + getHtmlInput( F("Показувати час без переднього нуля"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_SHOW_SINGLE_DIGIT_HOUR_NAME, HTML_PAGE_SHOW_SINGLE_DIGIT_HOUR_NAME, 0, 0, false, isSingleDigitHourShown, "onchange=\"pv();\"", "" ) + String( F("</div>"
+    "<div class=\"fi pl\">") ) + getHtmlInput( F("Зменшити відстань до двокрапок"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_COMPACT_LAYOUT_NAME, HTML_PAGE_COMPACT_LAYOUT_NAME, 0, 0, false, isDisplayCompactLayoutUsed, "onchange=\"pv();\"", "" ) + String( F("</div>"
     "<div class=\"fi pl\">") ) + getHtmlInput( F("Повільні двокрапки (30 разів в хв)"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_SLOW_SEMICOLON_ANIMATION_NAME, HTML_PAGE_SLOW_SEMICOLON_ANIMATION_NAME, 0, 0, false, isSlowSemicolonAnimation, "", "" ) + String( F("</div>"
     "<div class=\"fi pl\">") ) + getHtmlInput( F("Розвернути зображення на 180°"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_ROTATE_DISPLAY_NAME, HTML_PAGE_ROTATE_DISPLAY_NAME, 0, 0, false, isRotateDisplay, "", "" ) + String( F("</div>"
     "<div class=\"fi pl\">") ) + getHtmlInput( F("Анімований годинник"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_CLOCK_ANIMATED_NAME, HTML_PAGE_CLOCK_ANIMATED_NAME, 0, 0, false, isClockAnimated, "", "" ) + String( F("</div>"
@@ -1145,25 +1262,25 @@ void handleWebServerGet() {
 "<div class=\"ft\">"
   "<div class=\"fx\">"
     "<span>"
-      "<span class=\"sub\">") ) + getHtmlLink( HTML_PAGE_TEST_NIGHT_ENDPOINT, F("Перевірити нічний режим") ) + String( F("<span class=\"i\" title=\"Застосуйте налаштування перед перевіркою!\"></span></span>"
-      "<span class=\"sub\">") ) + getHtmlLink( HTML_PAGE_TESTLED_ENDPOINT, F("Перевірити матрицю") ) + String( F("</span>"
+      "<span class=\"sub\"><a href=\"/testdim\">Перевірити нічний режим</a><span class=\"i\" title=\"Застосуйте налаштування перед перевіркою!\"></span></span>"
+      "<span class=\"sub\"><a href=\"/testled\">Перевірити матрицю</a></span>"
     "</span>"
   "</div>"
   "<div class=\"fx\">"
     "<span>"
-      "<span class=\"sub\">") ) + getHtmlLink( HTML_PAGE_UPDATE_ENDPOINT, F("Оновити") ) + String( F("<span class=\"i\" title=\"Оновити прошивку. Поточна версія: ") ) + String( getFirmwareVersion() ) + String( F("\"></span></span>"
-      "<span class=\"sub\">") ) + getHtmlLink( HTML_PAGE_RESET_ENDPOINT, F("Відновити") ) + String( F("<span class=\"i\" title=\"Відновити до заводських налаштувань\"></span></span>"
-      "<span class=\"sub\">") ) + getHtmlLink( HTML_PAGE_REBOOT_ENDPOINT, F("Перезавантажити") ) + String( F("</span>"
+      "<span class=\"sub\"><a href=\"/update\">Оновити</a><span class=\"i\" title=\"Оновити прошивку. Поточна версія: ") ) + String( getFirmwareVersion() ) + String( F("\"></span></span>"
+      "<span class=\"sub\"><a href=\"/reset\">Відновити</a><span class=\"i\" title=\"Відновити до заводських налаштувань\"></span></span>"
+      "<span class=\"sub\"><a href=\"/reboot\">Перезавантажити</a></span>"
     "</span>"
   "</div>"
   "<div class=\"fx\" style=\"padding-top:0.3em;\">"
     "<span>"
       "<div class=\"stat\">"
         "<span class=\"btn\" onclick=\"this.classList.toggle('on');mnt();\">Яскравість</span>"
-        "<span>CUR <span id=\"b_cur\">") ) + String( analogRead(A0) ) + String( F("</span></span>"
-        "<span>AVG <span id=\"b_avg\">") ) + String( sensorBrightnessAverage ) + String( F("</span></span>"
-        "<span>REQ <span id=\"b_req\">") ) + String( displayCurrentBrightness ) + String( F("</span></span>"
-        "<span>DSP <span id=\"b_dsp\">") ) + String( static_cast<uint8_t>( round( displayPreviousBrightness ) ) ) + String( F("</span></span>"
+        "<span>CUR <span id=\"b_cur\"></span></span>"
+        "<span>AVG <span id=\"b_avg\"></span></span>"
+        "<span>REQ <span id=\"b_req\"></span></span>"
+        "<span>DSP <span id=\"b_dsp\"></span></span>"
       "</div>"
     "</span>"
   "</div>"
@@ -1176,7 +1293,7 @@ void handleWebServerGet() {
     "});"
   "}"
   "function pv(){"
-    "fetch('/preview?f='+document.querySelector('#") ) + HTML_PAGE_FONT_TYPE_NAME + String( F("').value+'&b='+(document.querySelector('#") ) + HTML_PAGE_BOLD_FONT_NAME + String( F("').checked?'1':'0')+'&s='+(document.querySelector('#") ) + HTML_PAGE_SHOW_SECS_NAME + String( F("').checked?'1':'0')+'&z='+(document.querySelector('#") ) + HTML_PAGE_SHOW_SINGLE_DIGIT_HOUR_NAME + String( F("').checked?'1':'0')).then(res=>{"
+    "fetch('/preview?f='+document.querySelector('#") ) + HTML_PAGE_FONT_TYPE_NAME + String( F("').value+'&b='+(document.querySelector('#") ) + HTML_PAGE_BOLD_FONT_NAME + String( F("').checked?'1':'0')+'&s='+(document.querySelector('#") ) + HTML_PAGE_SHOW_SECS_NAME + String( F("').checked?'1':'0')+'&z='+(document.querySelector('#") ) + HTML_PAGE_SHOW_SINGLE_DIGIT_HOUR_NAME + String( F("').checked?'1':'0')+'&c='+(document.querySelector('#") ) + HTML_PAGE_COMPACT_LAYOUT_NAME + String( F("').checked?'1':'0')).then(res=>{"
       "return res.ok?res.json():[];"
     "}).then(dt=>{"
       "document.querySelector('#exdw').innerHTML=(()=>{"
@@ -1204,11 +1321,9 @@ void handleWebServerGet() {
     "isMnt=!isMnt;"
     "mnf();"
   "}"
-  "function mnf(){"
-    "if(!isMnt)return;"
-    "fetch(\"") ) + String( HTML_PAGE_MONITOR_ENDPOINT ) + String( F("\")"
-    ".then(resp=>resp.json())"
-    ".then(data=>{"
+  "function mnf(isOnce){"
+    "if(!isOnce&&!isMnt)return;"
+    "fetch(\"/monitor\").then(resp=>resp.json()).then(data=>{"
       "for(const[key,value]of Object.entries(data.brt)){"
         "document.getElementById(\"b_\"+key).innerText=value;"
       "}"
@@ -1222,6 +1337,7 @@ void handleWebServerGet() {
     "dt();"
     "pv();"
     "pg();"
+    "mnf(true);"
   "});"
 "</script>") );
   addHtmlPageEnd( content );
@@ -1263,6 +1379,11 @@ String getHtmlPageFillup( String animationLength, String redirectLength ) {
   }
   return result;
 }
+
+
+bool isDisplayIntensityUpdateRequiredAfterSettingChanged = false;
+bool isDisplayRerenderRequiredAfterSettingChanged = false;
+bool isFontUpdateRequiredAfterSettingChanged = false;
 
 void handleWebServerPost() {
   String content;
@@ -1313,6 +1434,17 @@ void handleWebServerPost() {
   } else if( htmlPageIsSingleDigitHourShownReceived == "" ) {
     isSingleDigitHourShownReceived = false;
     isSingleDigitHourShownReceivedPopulated = true;
+  }
+
+  String htmlPageIsCompactLayoutReceived = wifiWebServer.arg( HTML_PAGE_COMPACT_LAYOUT_NAME );
+  bool isCompactLayoutReceived = false;
+  bool isCompactLayoutReceivedPopulated = false;
+  if( htmlPageIsCompactLayoutReceived == "on" ) {
+    isCompactLayoutReceived = true;
+    isCompactLayoutReceivedPopulated = true;
+  } else if( htmlPageIsCompactLayoutReceived == "" ) {
+    isCompactLayoutReceived = false;
+    isCompactLayoutReceivedPopulated = true;
   }
 
   String htmlPageIsClockAnimatedReceived = wifiWebServer.arg( HTML_PAGE_CLOCK_ANIMATED_NAME );
@@ -1411,15 +1543,18 @@ void handleWebServerPost() {
   wifiWebServer.sendHeader( String( F("Content-Length") ).c_str(), String( content.length() ) );
   wifiWebServer.send( 200, getContentType( F("html") ), content );
 
-  bool isDisplayIntensityUpdateRequired = false;
-  bool isDisplayRerenderRequired = false;
-  bool isFontUpdateRequired = false;
-
   if( isSingleDigitHourShownReceivedPopulated && isSingleDigitHourShownReceived != isSingleDigitHourShown ) {
     isSingleDigitHourShown = isSingleDigitHourShownReceived;
-    isDisplayRerenderRequired = true;
+    isDisplayRerenderRequiredAfterSettingChanged = true;
     Serial.println( F("Show single digit hour updated") );
     writeEepromBoolValue( eepromIsSingleDigitHourShownIndex, isSingleDigitHourShownReceived );
+  }
+
+  if( isCompactLayoutReceivedPopulated && isCompactLayoutReceived != isDisplayCompactLayoutUsed ) {
+    isDisplayCompactLayoutUsed = isCompactLayoutReceived;
+    isDisplayRerenderRequiredAfterSettingChanged = true;
+    Serial.println( F("Compact layout updated") );
+    writeEepromBoolValue( eepromIsCompactLayoutShownIndex, isCompactLayoutReceived );
   }
 
   if( isClockAnimatedReceivedPopulated && isClockAnimatedReceived != isClockAnimated ) {
@@ -1431,29 +1566,29 @@ void handleWebServerPost() {
 
   if( displayFontTypeNumberReceivedPopulated && displayFontTypeNumberReceived != displayFontTypeNumber ) {
     displayFontTypeNumber = displayFontTypeNumberReceived;
-    isDisplayRerenderRequired = true;
-    isFontUpdateRequired = true;
+    isDisplayRerenderRequiredAfterSettingChanged = true;
+    isFontUpdateRequiredAfterSettingChanged = true;
     Serial.println( F("Display font updated") );
     writeEepromIntValue( eepromDisplayFontTypeNumberIndex, displayFontTypeNumberReceived );
   }
 
   if( isDisplayBoldFondUsedReceivedPopulated && isDisplayBoldFondUsedReceived != isDisplayBoldFontUsed ) {
     isDisplayBoldFontUsed = isDisplayBoldFondUsedReceived;
-    isDisplayRerenderRequired = true;
+    isDisplayRerenderRequiredAfterSettingChanged = true;
     Serial.println( F("Show seconds updated") );
     writeEepromBoolValue( eepromIsFontBoldUsedIndex, isDisplayBoldFondUsedReceived );
   }
 
   if( isDisplaySecondsShownReceivedPopulated && isDisplaySecondsShownReceived != isDisplaySecondsShown ) {
     isDisplaySecondsShown = isDisplaySecondsShownReceived;
-    isDisplayRerenderRequired = true;
+    isDisplayRerenderRequiredAfterSettingChanged = true;
     Serial.println( F("Show seconds updated") );
     writeEepromBoolValue( eepromIsDisplaySecondsShownIndex, isDisplaySecondsShownReceived );
   }
 
   if( isRotateDisplayReceivedPopulated && isRotateDisplayReceived != isRotateDisplay ) {
     isRotateDisplay = isRotateDisplayReceived;
-    isDisplayRerenderRequired = true;
+    isDisplayRerenderRequiredAfterSettingChanged = true;
     Serial.println( F("Display rotation updated") );
     writeEepromBoolValue( eepromIsRotateDisplayIndex, isRotateDisplayReceived );
   }
@@ -1466,35 +1601,26 @@ void handleWebServerPost() {
 
   if( isSlowSemicolonAnimationReceivedPopulated && isSlowSemicolonAnimationReceived != isSlowSemicolonAnimation ) {
     isSlowSemicolonAnimation = isSlowSemicolonAnimationReceived;
-    isDisplayRerenderRequired = true;
+    isDisplayRerenderRequiredAfterSettingChanged = true;
     Serial.println( F("Display semicolon speed updated") );
     writeEepromBoolValue( eepromIsSlowSemicolonAnimationIndex, isSlowSemicolonAnimationReceived );
+    forceDisplaySync();
   }
 
   if( displayDayModeBrightnessReceivedPopulated && displayDayModeBrightnessReceived != displayDayModeBrightness ) {
     displayDayModeBrightness = displayDayModeBrightnessReceived;
-    isDisplayIntensityUpdateRequired = true;
-    isDisplayRerenderRequired = true;
+    isDisplayIntensityUpdateRequiredAfterSettingChanged = true;
+    isDisplayRerenderRequiredAfterSettingChanged = true;
     Serial.println( F("Display brightness updated") );
     writeEepromIntValue( eepromDisplayDayModeBrightnessIndex, displayDayModeBrightnessReceived );
   }
 
   if( displayNightModeBrightnessReceivedPopulated && displayNightModeBrightnessReceived != displayNightModeBrightness ) {
     displayNightModeBrightness = displayNightModeBrightnessReceived;
-    isDisplayIntensityUpdateRequired = true;
-    isDisplayRerenderRequired = true;
+    isDisplayIntensityUpdateRequiredAfterSettingChanged = true;
+    isDisplayRerenderRequiredAfterSettingChanged = true;
     Serial.println( F("Display night mode brightness updated") );
     writeEepromIntValue( eepromDisplayNightModeBrightnessIndex, displayNightModeBrightnessReceived );
-  }
-
-  if( isFontUpdateRequired ) {
-    TCFonts::setFont( displayFontTypeNumber );
-  }
-  if( isDisplayIntensityUpdateRequired ) {
-    setDisplayBrightness( true );
-  }
-  if( isDisplayRerenderRequired ) {
-    renderDisplay();
   }
 
   if( isWiFiChanged ) {
@@ -1528,20 +1654,19 @@ void handleWebServerGetPreview() {
   bool isSecondsShown = isSecondsShownStr == String( F("1") ) || isSecondsShownStr == String( F("true") ) || isSecondsShownStr == String( F("TRUE") ) || isSecondsShownStr == String( F("True") );
   String isSingleDigitHourShownCurrentlyStr = wifiWebServer.arg("z");
   bool isSingleDigitHourShownCurrently = isSingleDigitHourShownCurrentlyStr == String( F("1") ) || isSingleDigitHourShownCurrentlyStr == String( F("true") ) || isSingleDigitHourShownCurrentlyStr == String( F("TRUE") ) || isSingleDigitHourShownCurrentlyStr == String( F("True") );
+  String isCompactLayoutStr = wifiWebServer.arg("c");
+  bool isCompactLayout = isCompactLayoutStr == String( F("1") ) || isCompactLayoutStr == String( F("true") ) || isCompactLayoutStr == String( F("TRUE") ) || isCompactLayoutStr == String( F("True") );
 
-  String hourStr, minuteStr, secondStr;
+  String hourStrPreview, minuteStrPreview, secondStrPreview;
   if( timeCanBeCalculated() ) {
-    calculateTimeToShow( hourStr, minuteStr, secondStr, isSingleDigitHourShownCurrently );
+    calculateTimeToShow( hourStrPreview, minuteStrPreview, secondStrPreview, isSingleDigitHourShownCurrently );
   } else {
-    hourStr = "21";
-    minuteStr = "46";
-    secondStr = "37";
+    hourStrPreview = "21";
+    minuteStrPreview = "46";
+    secondStrPreview = "37";
   }
 
-  String textToDisplayLarge = hourStr + ":" + minuteStr;
-  String textToDisplaySmall = secondStr;
-
-  std::vector<std::vector<bool>> preview = getDisplayPreview( fontNumber, isBold, isSecondsShown, textToDisplayLarge, textToDisplaySmall );
+  std::vector<std::vector<bool>> preview = getDisplayPreview( hourStrPreview, minuteStrPreview, secondStrPreview, fontNumber, isBold, isSecondsShown, isCompactLayout );
   String response = "";
   uint8_t lineNumber = 0;
   response += "[\n";
@@ -1893,18 +2018,18 @@ void startWebServer() {
 }
 
 void configureWebServer() {
-  wifiWebServer.on( HTML_PAGE_ROOT_ENDPOINT, HTTP_GET,  handleWebServerGet );
-  wifiWebServer.on( HTML_PAGE_ROOT_ENDPOINT, HTTP_POST, handleWebServerPost );
-  wifiWebServer.on( HTML_PAGE_PREVIEW_ENDPOINT, HTTP_GET, handleWebServerGetPreview );
-  wifiWebServer.on( HTML_PAGE_DATA_ENDPOINT, HTTP_GET, handleWebServerGetData );
-  wifiWebServer.on( HTML_PAGE_SET_DATE_ENDPOINT, HTTP_GET, handleWebServerSetDate );
-  wifiWebServer.on( HTML_PAGE_TEST_NIGHT_ENDPOINT, HTTP_GET, handleWebServerGetTestNight );
-  wifiWebServer.on( HTML_PAGE_TESTLED_ENDPOINT, HTTP_GET, handleWebServerGetTestLeds );
-  wifiWebServer.on( HTML_PAGE_RESET_ENDPOINT, HTTP_GET, handleWebServerGetReset );
-  wifiWebServer.on( HTML_PAGE_REBOOT_ENDPOINT, HTTP_GET, handleWebServerGetReboot );
-  wifiWebServer.on( HTML_PAGE_PING_ENDPOINT, HTTP_GET, handleWebServerGetPing );
-  wifiWebServer.on( HTML_PAGE_MONITOR_ENDPOINT, HTTP_GET, handleWebServerGetMonitor );
-  wifiWebServer.on( HTML_PAGE_FAVICON_ENDPOINT, HTTP_GET, handleWebServerGetFavIcon );
+  wifiWebServer.on( "/", HTTP_GET,  handleWebServerGet );
+  wifiWebServer.on( "/", HTTP_POST, handleWebServerPost );
+  wifiWebServer.on( "/preview", HTTP_GET, handleWebServerGetPreview );
+  wifiWebServer.on( "/data", HTTP_GET, handleWebServerGetData );
+  wifiWebServer.on( "/setdt", HTTP_GET, handleWebServerSetDate );
+  wifiWebServer.on( "/testdim", HTTP_GET, handleWebServerGetTestNight );
+  wifiWebServer.on( "/testled", HTTP_GET, handleWebServerGetTestLeds );
+  wifiWebServer.on( "/reset", HTTP_GET, handleWebServerGetReset );
+  wifiWebServer.on( "/reboot", HTTP_GET, handleWebServerGetReboot );
+  wifiWebServer.on( "/ping", HTTP_GET, handleWebServerGetPing );
+  wifiWebServer.on( "/monitor", HTTP_GET, handleWebServerGetMonitor );
+  wifiWebServer.on( "/favicon.ico", HTTP_GET, handleWebServerGetFavIcon );
   wifiWebServer.onNotFound([]() {
     handleWebServerRedirect();
   });
@@ -1941,6 +2066,19 @@ void setup() {
 }
 
 void loop() {
+  if( isFontUpdateRequiredAfterSettingChanged ) {
+    TCFonts::setFont( displayFontTypeNumber );
+    isFontUpdateRequiredAfterSettingChanged = false;
+  }
+  if( isDisplayIntensityUpdateRequiredAfterSettingChanged ) {
+    setDisplayBrightness( true );
+    isDisplayIntensityUpdateRequiredAfterSettingChanged = false;
+  }
+  if( isDisplayRerenderRequiredAfterSettingChanged ) {
+    renderDisplay();
+    isDisplayRerenderRequiredAfterSettingChanged = false;
+  }
+
   unsigned long currentMillis = millis();
 
   if( isFirstLoopRun || ( calculateDiffMillis( previousMillisInternalLed, currentMillis ) >= ( getInternalLedStatus() == HIGH ? DELAY_INTERNAL_LED_ANIMATION_HIGH : DELAY_INTERNAL_LED_ANIMATION_LOW ) ) ) {
