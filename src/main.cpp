@@ -611,7 +611,6 @@ void renderDisplayText( String hourStr, String minuteStr, String secondStr, bool
   }
 
   uint8_t displayWidthUsed = 0;
-  std::map<String, std::vector<uint8_t>> font = TCFonts::getFont( displayFontTypeNumber );
   bool isWideTextRendered = !isDisplaySecondsShown;
 
   for( size_t charToDisplayIndex = 0; charToDisplayIndex < textToDisplayLarge.length(); ++charToDisplayIndex ) {
@@ -644,7 +643,7 @@ void renderDisplayText( String hourStr, String minuteStr, String secondStr, bool
       displayWidthUsed++;
     }
 
-    std::vector<uint8_t> charImage = TCFonts::getSymbol( font, charToDisplay, isDisplayBoldFontUsed, isDisplayCompactLayoutUsed, isWideTextRendered, false );
+    std::vector<uint8_t> charImage = TCFonts::getSymbol( displayFontTypeNumber, charToDisplay, isDisplayCompactLayoutUsed, isDisplayBoldFontUsed, isWideTextRendered, false, false );
     std::vector<uint8_t> charImagePrevious;
     if( isDisplayAnimationInProgress ) {
       bool isAnimatable = false;
@@ -656,7 +655,7 @@ void renderDisplayText( String hourStr, String minuteStr, String secondStr, bool
       if( isAnimatable && charToDisplayIndex < textToDisplayLargeAnimated.length() ) {
         char charToDisplayPrevious = textToDisplayLargeAnimated.charAt( charToDisplayIndex );
         if( charToDisplay != charToDisplayPrevious ) {
-          charImagePrevious = TCFonts::getSymbol( font, charToDisplayPrevious, isDisplayBoldFontUsed, isDisplayCompactLayoutUsed, isWideTextRendered, false );
+          charImagePrevious = TCFonts::getSymbol( displayFontTypeNumber, charToDisplayPrevious, isDisplayCompactLayoutUsed, isDisplayBoldFontUsed, isWideTextRendered, false, false );
         }
       }
     }
@@ -760,7 +759,7 @@ void renderDisplayText( String hourStr, String minuteStr, String secondStr, bool
         displayWidthUsed++;
       }
 
-      std::vector<uint8_t> charImage = TCFonts::getSymbol( font, charToDisplay, isDisplayBoldFontUsed, isDisplayCompactLayoutUsed, isWideTextRendered, true );
+      std::vector<uint8_t> charImage = TCFonts::getSymbol( displayFontTypeNumber, charToDisplay, isDisplayCompactLayoutUsed, isDisplayBoldFontUsed, isWideTextRendered, true, false );
       for( uint8_t charX = 0; charX < charWidth; ++charX ) {
         for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
           bool isPointEnabled = false;
@@ -812,7 +811,6 @@ std::vector<std::vector<bool>> getDisplayPreview( String hourStrPreview, String 
   String textToDisplaySmallPreview = secondStrPreview;
 
   uint8_t displayWidthUsed = 0;
-  std::map<String, std::vector<uint8_t>> font = TCFonts::getFont( fontNumberPreview );
   bool isWideTextPreview = !isSecondsShownPreview;
 
   for( size_t charToDisplayIndex = 0; charToDisplayIndex < textToDisplayLargePreview.length(); ++charToDisplayIndex ) {
@@ -841,7 +839,7 @@ std::vector<std::vector<bool>> getDisplayPreview( String hourStrPreview, String 
       displayWidthUsed++;
     }
 
-    std::vector<uint8_t> charImage = TCFonts::getSymbol( font, charToDisplay, isBoldPreview, isCompactLayoutPreview, isWideTextPreview, false );
+    std::vector<uint8_t> charImage = TCFonts::getSymbol( fontNumberPreview, charToDisplay, isCompactLayoutPreview, isBoldPreview, isWideTextPreview, false, false );
     for( uint8_t charX = 0; charX < charWidth; ++charX ) {
       for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
         bool isPointEnabled = false;
@@ -890,7 +888,7 @@ std::vector<std::vector<bool>> getDisplayPreview( String hourStrPreview, String 
         displayWidthUsed++;
       }
 
-      std::vector<uint8_t> charImage = TCFonts::getSymbol( font, charToDisplay, isBoldPreview, isCompactLayoutPreview, isWideTextPreview, true );
+      std::vector<uint8_t> charImage = TCFonts::getSymbol( fontNumberPreview, charToDisplay, isCompactLayoutPreview, isBoldPreview, isWideTextPreview, true, false );
       for( uint8_t charX = 0; charX < charWidth; ++charX ) {
         for( uint8_t displayY = 0; displayY < DISPLAY_HEIGHT; ++displayY ) {
           bool isPointEnabled = false;
@@ -1383,7 +1381,6 @@ String getHtmlPageFillup( String animationLength, String redirectLength ) {
 
 bool isDisplayIntensityUpdateRequiredAfterSettingChanged = false;
 bool isDisplayRerenderRequiredAfterSettingChanged = false;
-bool isFontUpdateRequiredAfterSettingChanged = false;
 
 void handleWebServerPost() {
   String content;
@@ -1567,7 +1564,6 @@ void handleWebServerPost() {
   if( displayFontTypeNumberReceivedPopulated && displayFontTypeNumberReceived != displayFontTypeNumber ) {
     displayFontTypeNumber = displayFontTypeNumberReceived;
     isDisplayRerenderRequiredAfterSettingChanged = true;
-    isFontUpdateRequiredAfterSettingChanged = true;
     Serial.println( F("Display font updated") );
     writeEepromIntValue( eepromDisplayFontTypeNumberIndex, displayFontTypeNumberReceived );
   }
@@ -2055,7 +2051,6 @@ void setup() {
   loadEepromData();
   initVariables();
   initDisplay();
-  TCFonts::setFont( displayFontTypeNumber );
   LittleFS.begin();
 
   configureWebServer();
@@ -2066,10 +2061,6 @@ void setup() {
 }
 
 void loop() {
-  if( isFontUpdateRequiredAfterSettingChanged ) {
-    TCFonts::setFont( displayFontTypeNumber );
-    isFontUpdateRequiredAfterSettingChanged = false;
-  }
   if( isDisplayIntensityUpdateRequiredAfterSettingChanged ) {
     setDisplayBrightness( true );
     isDisplayIntensityUpdateRequiredAfterSettingChanged = false;
