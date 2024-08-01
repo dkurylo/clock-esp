@@ -60,6 +60,7 @@ const uint16_t DELAY_INTERNAL_LED_ANIMATION_HIGH = 200;
 const uint16_t TIMEOUT_NTP_CLIENT_CONNECT = 2500;
 const uint16_t DELAY_NTP_STATUS_CHECK = 10000;
 const uint32_t DELAY_NTP_TIME_SYNC = 6 * 60 * 60 * 1000; //sync time every 6 hours
+const uint32_t DELAY_NTP_TIME_SYNC_RETRY = 2 * 60 * 60 * 1000; //sync time every 2 hours if regular sync fails
 bool isSlowSemicolonAnimation = false; //semicolon period, false = 60 blinks per minute; true = 30 blinks per minute
 const uint16_t DELAY_DISPLAY_ANIMATION = 20; //led animation speed, in ms
 
@@ -432,6 +433,9 @@ bool updateTimeClient() {
         forceDisplaySync();
       } else {
         Serial.println( F(" error") );
+        if( timeClient.isTimeSet() ) { //when time was initially set but during NTP update it fails to retrieve current time
+          previousMillisNtpUpdated += DELAY_NTP_TIME_SYNC_RETRY; //retry again but with smaller delay
+        }
       }
     }
   }
