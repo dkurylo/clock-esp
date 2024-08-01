@@ -58,8 +58,8 @@ const uint16_t DELAY_INTERNAL_LED_ANIMATION_HIGH = 200;
 
 //time settings
 const uint16_t TIMEOUT_NTP_CLIENT_CONNECT = 2500;
-const uint16_t DELAY_NTP_UPDATED_CHECK = 10000;
-const uint32_t DELAY_NTP_TIME_SYNC = 3600000;
+const uint16_t DELAY_NTP_STATUS_CHECK = 10000;
+const uint32_t DELAY_NTP_TIME_SYNC = 6 * 60 * 60 * 1000; //sync time every 6 hours
 bool isSlowSemicolonAnimation = false; //semicolon period, false = 60 blinks per minute; true = 30 blinks per minute
 const uint16_t DELAY_DISPLAY_ANIMATION = 20; //led animation speed, in ms
 
@@ -116,9 +116,9 @@ bool isFirstLoopRun = true;
 unsigned long previousMillisDisplayAnimation = millis();
 unsigned long previousMillisSemicolonAnimation = millis();
 unsigned long previousMillisInternalLed = millis();
-unsigned long previousMillisNtpUpdatedCheck = millis();
+unsigned long previousMillisNtpUpdated = millis();
 unsigned long previousMillisWiFiStatusCheck = millis();
-unsigned long previousMillisTimeClientStatusCheck = millis();
+unsigned long previousMillisNtpStatusCheck = millis();
 unsigned long previousMillisSensorBrightnessCheck = millis();
 
 bool forceNtpUpdate = false;
@@ -129,9 +129,9 @@ void initVariables() {
   previousMillisDisplayAnimation = currentMillis;
   previousMillisSemicolonAnimation = currentMillis;
   previousMillisInternalLed = currentMillis;
-  previousMillisNtpUpdatedCheck = currentMillis;
+  previousMillisNtpUpdated = currentMillis;
   previousMillisWiFiStatusCheck = currentMillis;
-  previousMillisTimeClientStatusCheck = currentMillis;
+  previousMillisNtpStatusCheck = currentMillis;
   previousMillisSensorBrightnessCheck = currentMillis;
 }
 
@@ -416,21 +416,23 @@ void initTimeClient() {
 
 bool updateTimeClient() {
   if( !WiFi.isConnected() ) return false;
-  if( !timeClient.isTimeSet() ) {
-    if( !isTimeClientInitialised ) {
-      initTimeClient();
-    }
-    if( isTimeClientInitialised /*&& !isCustomDateTimeSet*/ ) {
+  if( !isTimeClientInitialised ) {
+    initTimeClient();
+  }
+  if( isTimeClientInitialised ) {
+    if( !timeClient.isTimeSet() || calculateDiffMillis( previousMillisNtpUpdated, millis() ) >= DELAY_NTP_TIME_SYNC ) {
       Serial.print( F("Updating NTP time...") );
       bool isTimeUpdated = timeClient.update();
       if( isTimeUpdated && timeClient.isTimeSet() ) {
         Serial.println( F(" done") );
+        previousMillisNtpUpdated = millis();
+        if( isCustomDateTimeSet ) {
+          isCustomDateTimeSet = false;
+        }
         forceDisplaySync();
-      }
-      if( !isTimeUpdated ) {
+      } else {
         Serial.println( F(" error") );
       }
-      previousMillisTimeClientStatusCheck = millis();
     }
   }
   return true;
@@ -2101,11 +2103,11 @@ void loop() {
   }
 
   currentMillis = millis();
-  if( isFirstLoopRun || forceNtpUpdate || ( calculateDiffMillis( previousMillisNtpUpdatedCheck, millis() ) >= DELAY_NTP_UPDATED_CHECK ) ) {
+  if( isFirstLoopRun || forceNtpUpdate || ( calculateDiffMillis( previousMillisNtpStatusCheck, millis() ) >= DELAY_NTP_STATUS_CHECK ) ) {
     if( updateTimeClient() ) {
       forceNtpUpdate = false;
     }
-    previousMillisNtpUpdatedCheck = currentMillis;
+    previousMillisNtpStatusCheck = currentMillis;
   }
 
   currentMillis = millis();
