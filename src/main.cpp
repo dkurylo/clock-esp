@@ -29,6 +29,8 @@
 //#define MAX_CLK_PIN 5 //if using HW SPI then it's automatically SCK 14
 #define MAX_CS_PIN 15 //if using HW SPI then it's SS 15 (not automatically)
 
+#define BRIGHTNESS_INPUT_PIN A0
+
 bool isNewBoard = false;
 const char* getFirmwareVersion() { const char* result = "1.00"; return result; }
 
@@ -478,7 +480,7 @@ bool isWithinDstBoundaries( time_t dt ) {
   time_t lastOctoberSunday_t = mktime(&lastOctoberSunday);
 
   // Check if the datetime is within the DST boundaries
-  return dt > lastMarchSunday_t && dt < lastOctoberSunday_t;
+  return lastMarchSunday_t <= dt && dt < lastOctoberSunday_t;
 }
 
 
@@ -489,7 +491,7 @@ double sensorBrightnessAverage = -1.0;
 int brightnessDiffSustainedMillis = 0;
 
 void calculateDisplayBrightness() {
-  uint16_t currentBrightness = analogRead(A0);
+  uint16_t currentBrightness = analogRead( BRIGHTNESS_INPUT_PIN );
   if( sensorBrightnessAverage < 0 ) {
     sensorBrightnessAverage = (double)currentBrightness;
   } else {
@@ -1100,7 +1102,7 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
     "<style>"
       ":root{--f:22px;}"
       "body{margin:0;background-color:#444;font-family:sans-serif;color:#FFF;}"
-      "body,input,button{font-size:var(--f);}"
+      "body,input,button,select{font-size:var(--f);}"
       ".wrp{width:60%;min-width:460px;max-width:600px;margin:auto;margin-bottom:10px;}"
       "h2{color:#FFF;font-size:calc(var(--f)*1.2);text-align:center;margin-top:0.3em;margin-bottom:0.1em;}"
       ".fx{display:flex;flex-wrap:wrap;margin:auto;}"
@@ -1113,7 +1115,8 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
       ".ex.exc{height:0;margin-top:0;}.ex.exc>*{visibility:hidden;}"
       ".ex.exc.exon{height:inherit;}.ex.exc.exon>*{visibility:initial;}"
       "label{flex:none;padding-right:0.6em;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
-      "input{width:100%;padding:0.1em 0.2em;}"
+      "input,select{width:100%;padding:0.1em 0.2em;}"
+      "select.mid{text-align:center;}"
       "input[type=\"radio\"],input[type=\"checkbox\"]{flex:none;margin:0.1em 0;width:calc(var(--f)*1.2);height:calc(var(--f)*1.2);}"
       "input[type=\"radio\"]+label,input[type=\"checkbox\"]+label{padding-left:0.6em;padding-right:initial;flex:1 1 auto;max-width:initial;}"
       "input[type=\"range\"]{-webkit-appearance:none;background:transparent;padding:0;}"
@@ -1394,22 +1397,6 @@ void handleWebServerPost() {
   String htmlPageSsidNameReceived = wifiWebServer.arg( HTML_PAGE_WIFI_SSID_NAME );
   String htmlPageSsidPasswordReceived = wifiWebServer.arg( HTML_PAGE_WIFI_PWD_NAME );
 
-  if( htmlPageSsidNameReceived.length() == 0 ) {
-    addHtmlPageStart( content );
-    content += String( F("<h2>Error: Missing SSID Name</h2>") );
-    addHtmlPageEnd( content );
-    wifiWebServer.sendHeader( String( F("Content-Length") ).c_str(), String( content.length() ) );
-    wifiWebServer.send( 400, getContentType( F("html") ), content );
-    return;
-  }
-  if( htmlPageSsidPasswordReceived.length() == 0 ) {
-    addHtmlPageStart( content );
-    content += String( F("<h2>Error: Missing SSID Password</h2>") );
-    addHtmlPageEnd( content );
-    wifiWebServer.sendHeader( String( F("Content-Length") ).c_str(), String( content.length() ) );
-    wifiWebServer.send( 400, getContentType( F("html") ), content );
-    return;
-  }
   if( htmlPageSsidNameReceived.length() > getWiFiClientSsidNameMaxLength() ) {
     addHtmlPageStart( content );
     content += String( F("<h2>Error: SSID Name exceeds maximum length of ") ) + String( getWiFiClientSsidNameMaxLength() ) + String( F("</h2>") );
@@ -1523,14 +1510,14 @@ void handleWebServerPost() {
   String htmlPageDisplayDayModeBrightnessReceived = wifiWebServer.arg( HTML_PAGE_BRIGHTNESS_DAY_NAME );
   uint displayDayModeBrightnessReceived = htmlPageDisplayDayModeBrightnessReceived.toInt();
   bool displayDayModeBrightnessReceivedPopulated = false;
-  if( displayDayModeBrightnessReceived > 0 || displayDayModeBrightnessReceived <= 15 ) {
+  if( displayDayModeBrightnessReceived >= 0 && displayDayModeBrightnessReceived <= 15 ) {
     displayDayModeBrightnessReceivedPopulated = true;
   }
 
   String htmlPageDisplayNightModeBrightnessReceived = wifiWebServer.arg( HTML_PAGE_BRIGHTNESS_NIGHT_NAME );
   uint displayNightModeBrightnessReceived = htmlPageDisplayNightModeBrightnessReceived.toInt();
   bool displayNightModeBrightnessReceivedPopulated = false;
-  if( displayNightModeBrightnessReceived > 0 || displayNightModeBrightnessReceived <= 15 ) {
+  if( displayNightModeBrightnessReceived >= 0 && displayNightModeBrightnessReceived <= 15 ) {
     displayNightModeBrightnessReceivedPopulated = true;
     if( displayNightModeBrightnessReceived > displayDayModeBrightnessReceived ) {
       displayNightModeBrightnessReceived = displayDayModeBrightnessReceived;
@@ -1969,7 +1956,7 @@ void handleWebServerGetMonitor() {
       "\"host\":\"") ) + getFullWiFiHostName() + String( F("\""
     "},"
     "\"brt\":{"
-      "\"cur\":") ) + String( analogRead(A0) ) + String( F(","
+      "\"cur\":") ) + String( analogRead( BRIGHTNESS_INPUT_PIN ) ) + String( F(","
       "\"avg\":") ) + String( sensorBrightnessAverage ) + String( F(","
       "\"req\":") ) + String( displayCurrentBrightness ) + String( F(","
       "\"dsp\":") ) + String( static_cast<uint8_t>( round( displayPreviousBrightness ) ) ) + String( F(""
@@ -1977,6 +1964,9 @@ void handleWebServerGetMonitor() {
     "\"ram\":{"
       "\"heap\":\"") ) + String( ESP.getFreeHeap() ) + String( F("\","
       "\"frag\":\"") ) + String( ESP.getHeapFragmentation() ) + String( F("\""
+    "},"
+    "\"cpu\":{"
+      "\"freq\":\"") ) + String( ESP.getCpuFreqMHz() ) + String( F("\""
     "}"
   "}" ) );
   wifiWebServer.send( 200, getContentType( F("json") ), content );
