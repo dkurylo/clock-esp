@@ -81,56 +81,86 @@ void NTPClient::begin(unsigned int port) {
   this->_udpSetup = true;
 }
 
-bool NTPClient::forceUpdate() {
-  #ifdef DEBUG_NTPClient
-    Serial.println("Update from NTP Server");
-  #endif
-
-  // flush any existing packets
-  while(this->_udp->parsePacket() != 0)
-    this->_udp->flush();
-
-  this->sendNTPPacket();
-
-  // Wait till data is there or timeout...
-  byte timeout = 0;
-  int cb = 0;
-  do {
-    delay ( 10 );
-    cb = this->_udp->parsePacket();
-    if (timeout > 100) return false; // timeout after 1000 ms
-    timeout++;
-  } while (cb == 0);
-
-  if( timeout <= 5 ) { //if response is fast assume half-trip delay between request sent and server responded
-    this->_lastUpdate = millis() - ((10 * (timeout + 1)) >> 1); // Account for delay in reading the time
+unsigned long NTPClient::calculateDiffMillis( unsigned long startMillis, unsigned long endMillis ) const { //this function accounts for millis overflow when calculating millis difference
+  if( endMillis >= startMillis ) {
+    return endMillis - startMillis;
   } else {
-    this->_lastUpdate = millis() - (10 * (timeout + 1)); // Account for delay in reading the time
+    return( ULONG_MAX - startMillis ) + endMillis + 1;
   }
-
-  this->_udp->read(this->_packetBuffer, NTP_PACKET_SIZE);
-
-  unsigned long highWord = word(this->_packetBuffer[40], this->_packetBuffer[41]);
-  unsigned long lowWord = word(this->_packetBuffer[42], this->_packetBuffer[43]);
-  // combine the four bytes (two words) into a long integer
-  // this is NTP time (seconds since Jan 1 1900):
-  unsigned long secsSince1900 = highWord << 16 | lowWord;
-
-  this->_currentEpoc = secsSince1900 - SEVENZYYEARS;
-
-  unsigned long millis = ( word(this->_packetBuffer[44], this->_packetBuffer[45]) ) * 1000UL >> 16;
-  this->_lastUpdate -= millis; //shift last update time by the amount of fractional seconds reported
-
-  return true;  // return true after successful update
 }
 
-bool NTPClient::update() {
-  if ((millis() - this->_lastUpdate >= this->_updateInterval)     // Update after _updateInterval
-    || this->_lastUpdate == 0) {                                // Update if there was no update yet.
+NTPClient::Status NTPClient::forceUpdate() {
+  if( this->isPacketTravelling ) {
+    unsigned long timeSpent = this->calculateDiffMillis( this->packetSentMillis, millis() );
+    if( timeSpent > 1000 ) { // give 1000ms for timeout
+      this->isPacketTravelling = false;
+      #ifdef DEBUG_NTPClient
+        Serial.println( "NTP packet was not received after 1000ms" );
+      #endif
+      return NTPClient::STATUS_FAILED_RESPONSE;
+    } else {
+      int cb = 0;
+      cb = this->_udp->parsePacket();
+      if( cb == 0 ) {
+        return NTPClient::STATUS_AWAITING_RESPONSE; // still waiting for response
+      } else {
+        this->isPacketTravelling = false;
+
+        timeSpent = this->calculateDiffMillis( this->packetSentMillis, millis() );
+        if( timeSpent <= 50 ) { //if response is fast assume half-trip delay between request sent and server responded
+          timeSpent = (timeSpent >> 1);
+        }
+
+        this->_lastUpdate = millis() - timeSpent; // Account for network delays in reading the time
+
+        this->_udp->read(this->_packetBuffer, NTP_PACKET_SIZE);
+
+        unsigned long highWord = word(this->_packetBuffer[40], this->_packetBuffer[41]);
+        unsigned long lowWord = word(this->_packetBuffer[42], this->_packetBuffer[43]);
+        // combine the four bytes (two words) into a long integer
+        // this is NTP time (seconds since Jan 1 1900):
+        unsigned long secsSince1900 = highWord << 16 | lowWord;
+
+        this->_currentEpoc = secsSince1900 - SEVENZYYEARS;
+
+        unsigned long millis = ( word(this->_packetBuffer[44], this->_packetBuffer[45]) ) * 1000UL >> 16;
+
+        this->_lastUpdate -= millis; //shift last update time by the amount of fractional seconds reported so that last update second starts at x1000 millis
+
+        #ifdef DEBUG_NTPClient
+          Serial.print( "NTP packet received" );
+        #endif
+
+        return NTPClient::STATUS_SUCCESS_RESPONSE;
+      }
+    }
+  } else {
+    // flush any existing packets
+    while( this->_udp->parsePacket() != 0 ) {
+      this->_udp->flush();
+    }
+
+    this->sendNTPPacket();
+    this->packetSentMillis = millis();
+    this->isPacketTravelling = true;
+    #ifdef DEBUG_NTPClient
+      Serial.println( "NTP packet was sent" );
+    #endif
+    return NTPClient::STATUS_AWAITING_RESPONSE;
+  }
+
+  return NTPClient::STATUS_IDLE;
+}
+
+NTPClient::Status NTPClient::update() {
+  if( ( this->calculateDiffMillis( this->_lastUpdate, millis() ) >= this->_updateInterval )     // Update after _updateInterval
+      || this->_lastUpdate == 0                                                           // Update if there was no update yet.
+    ) {
     if (!this->_udpSetup || this->_port != NTP_DEFAULT_LOCAL_PORT) this->begin(this->_port); // setup the UDP client if needed
     return this->forceUpdate();
   }
-  return false;   // return false if update does not occur
+
+  return NTPClient::STATUS_IDLE;   // return false if update does not occur
 }
 
 bool NTPClient::isTimeSet() const {
@@ -140,8 +170,10 @@ bool NTPClient::isTimeSet() const {
 unsigned long NTPClient::getEpochTime() const {
   return this->_timeOffset + // User offset
          this->_currentEpoc + // Epoch returned by the NTP server
-         ((millis() - this->_lastUpdate) / 1000); // Time since last update
+         ( this->calculateDiffMillis( this->_lastUpdate, millis() ) / 1000 ); // Time since last update
 }
+
+
 
 int NTPClient::getDay() const {
   return (((this->getEpochTime()  / 86400L) + 4 ) % 7); //0 is Sunday
@@ -154,6 +186,9 @@ int NTPClient::getMinutes() const {
 }
 int NTPClient::getSeconds() const {
   return (this->getEpochTime() % 60);
+}
+int NTPClient::getSubSeconds() const {
+  return (this->calculateDiffMillis( this->_lastUpdate, millis() ) % 1000);
 }
 
 String NTPClient::getFormattedTime() const {

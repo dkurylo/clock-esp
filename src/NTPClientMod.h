@@ -9,6 +9,9 @@
 #define NTP_DEFAULT_LOCAL_PORT 1337
 
 class NTPClient {
+  public:
+    enum Status { STATUS_IDLE, STATUS_AWAITING_RESPONSE, STATUS_FAILED_RESPONSE, STATUS_SUCCESS_RESPONSE };
+
   private:
     UDP*          _udp;
     bool          _udpSetup       = false;
@@ -26,6 +29,12 @@ class NTPClient {
     byte          _packetBuffer[NTP_PACKET_SIZE];
 
     void          sendNTPPacket();
+
+    bool          isPacketTravelling = false;
+    unsigned long packetSentMillis = 0;
+    Status        currentStatus = STATUS_IDLE;
+
+    unsigned long calculateDiffMillis( unsigned long startMillis, unsigned long endMillis ) const;
 
   public:
     NTPClient(UDP& udp);
@@ -63,16 +72,16 @@ class NTPClient {
      * This should be called in the main loop of your application. By default an update from the NTP Server is only
      * made every 60 seconds. This can be configured in the NTPClient constructor.
      *
-     * @return true on success, false on failure
+     * @return NTPClient::Status
      */
-    bool update();
+    Status update();
 
     /**
      * This will force the update from the NTP Server.
      *
-     * @return true on success, false on failure
+     * @return NTPClient::Status
      */
-    bool forceUpdate();
+    Status forceUpdate();
 
     /**
      * This allows to check if the NTPClient successfully received a NTP packet and set the time.
@@ -85,6 +94,7 @@ class NTPClient {
     int getHours() const;
     int getMinutes() const;
     int getSeconds() const;
+    int getSubSeconds() const;
 
     /**
      * Changes the time offset. Useful for changing timezones dynamically
