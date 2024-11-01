@@ -1063,7 +1063,7 @@ void connectToWiFiSync() {
   uint8_t previousInternalLedStatus = getInternalLedStatus();
   while( true ) {
     setInternalLedStatus( HIGH );
-    delay( 1000 );
+    delay( 500 );
     wl_status_t wifiStatus = WiFi.status();
     if( WiFi.isConnected() ) {
       Serial.println( F(" done") );
@@ -1121,7 +1121,7 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
       ".ft{margin-top:1em;}"
       ".pl{padding-left:0.6em;}"
       ".pll{padding-left:calc(var(--f)*1.2 + 0.6em);}"
-      ".lnk{margin:auto;color:#AAA;}"
+      ".lnk{margin:auto;color:#AAA;display:inline-block;}"
       ".i{color:#CCC;margin-left:0.2em;border:1px solid #777;border-radius:50%;background-color:#666;cursor:default;font-size:65%;vertical-align:top;width:1em;height:1em;display:inline-block;text-align:center;}"
       ".i:before{content:\"i\";position:relative;top:-0.07em;}"
       ".i:hover{background-color:#777;color:#DDD;}"
@@ -1149,7 +1149,13 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
   "</head>"
   "<body>"
     "<div class=\"wrp\">"
-      "<h2>ГОДИННИК<div class=\"lnk\" style=\"font-size:50%;\">Розробник: <a href=\"mailto:kurylo.press@gmail.com?subject=Clock\">Дмитро Курило</a></div></h2>";
+      "<h2>"
+        "ГОДИННИК"
+        "<div style=\"line-height:0.5;\">"
+          "<div class=\"lnk\" style=\"font-size:50%;\">Розробник: <a href=\"mailto:kurylo.press@gmail.com?subject=Clock\" target=\"_blank\">Дмитро Курило</a></div> "
+          "<div class=\"lnk\" style=\"font-size:50%;\"><a href=\"https://github.com/dkurylo/clock-esp\" target=\"_blank\">GitHub</a></div>"
+        "</div>"
+      "</h2>";
 const char HTML_PAGE_END[] PROGMEM = "</div>"
   "</body>"
 "</html>";
