@@ -9,7 +9,7 @@
 #else //ESP32 or ESP32S2
 #include <WiFi.h>
 #include <WebServer.h>
-#include <HTTPUpdateServer.h>
+#include <HTTPUpdateServerMod.h>
 #endif
 
 #include <DNSServer.h> //for Captive Portal
@@ -348,7 +348,14 @@ void createAccessPoint() {
   apStartedMillis = millis();
   Serial.print( F("Creating WiFi AP...") );
   WiFi.softAPConfig( getWiFiAccessPointIp(), getWiFiAccessPointIp(), getWiFiAccessPointNetMask() );
+
+  #ifdef ESP8266
   WiFi.softAP( ( String( getWiFiAccessPointSsid() ) + " " + String( ESP.getChipId() ) ).c_str(), getWiFiAccessPointPassword(), 0, false );
+  #else //ESP32 or ESP32S2
+  String macAddress = String( ESP.getEfuseMac() );
+  WiFi.softAP( ( String( getWiFiAccessPointSsid() ) + " " + macAddress.substring( macAddress.length() - 4 ) ).c_str(), getWiFiAccessPointPassword(), 0, false );
+  #endif
+
   IPAddress accessPointIp = WiFi.softAPIP();
   dnsServer.start( 53, "*", accessPointIp );
   Serial.println( String( F(" done | IP: ") ) + accessPointIp.toString() );
@@ -986,8 +993,10 @@ const String getWiFiStatusText( wl_status_t status ) {
       return F("CONNECT_FAILED");
     case WL_CONNECTION_LOST:
       return F("CONNECTION_LOST");
+    #ifdef ESP8266
     case WL_WRONG_PASSWORD:
       return F("WRONG_PASSWORD");
+    #endif
     case WL_DISCONNECTED:
       return F("DISCONNECTED");
     default:
@@ -1019,7 +1028,12 @@ bool isRouterSsidProvided() {
 }
 
 String getFullWiFiHostName() {
+  #ifdef ESP8266
   return String( getWiFiHostName() ) + "-" + String( ESP.getChipId() );
+  #else //ESP32 or ESP32S2
+  String macAddress = String( ESP.getEfuseMac() );
+  return String( getWiFiHostName() ) + "-" + macAddress.substring( macAddress.length() - 4 );
+  #endif
 }
 
 void connectToWiFiAsync( bool isInit ) {
@@ -1057,7 +1071,7 @@ void connectToWiFiSync() {
   }
 
   Serial.println( String( F("Connecting to WiFi '") ) + String( wiFiClientSsid ) + "'..." );
-  WiFi.hostname( ( String( getWiFiHostName() ) + "-" + String( ESP.getChipId() ) ).c_str() );
+  WiFi.hostname( getFullWiFiHostName().c_str() );
   WiFi.begin( wiFiClientSsid, wiFiClientPassword );
 
   if( WiFi.isConnected() ) {
@@ -1963,8 +1977,12 @@ void handleWebServerGetMonitor() {
       "\"dsp\":") ) + String( static_cast<uint8_t>( round( displayPreviousBrightness ) ) ) + String( F(""
     "},"
     "\"ram\":{"
-      "\"heap\":\"") ) + String( ESP.getFreeHeap() ) + String( F("\","
-      "\"frag\":\"") ) + String( ESP.getHeapFragmentation() ) + String( F("\""
+      "\"heap\":\"") ) + String( ESP.getFreeHeap() ) + String( F("\"") );
+    #ifdef ESP8266
+    content = content + String( F(","
+      "\"frag\":\"") ) + String( ESP.getHeapFragmentation() ) + String( F("\"") );
+    #endif
+    content = content + String( F(""
     "},"
     "\"cpu\":{"
       "\"freq\":\"") ) + String( ESP.getCpuFreqMHz() ) + String( F("\""
@@ -2030,11 +2048,25 @@ void configureWebServer() {
 }
 
 
-
+#ifdef ESP8266
 WiFiEventHandler wiFiEventHandler;
 void onWiFiConnected( const WiFiEventStationModeConnected& event ) {
-  Serial.println( String( F("WiFi is connected to '") + String( event.ssid ) ) + String ( F("'") ) );
+  Serial.println( String( F("WiFi is connected to '") ) + String( event.ssid ) + String ( F("'") ) );
 }
+#else //ESP32 or ESP32S2
+void WiFiEvent( WiFiEvent_t event ) {
+  switch( event ) {
+    case SYSTEM_EVENT_STA_GOT_IP:
+      Serial.println( String( F("WiFi is connected to '") ) + String( WiFi.SSID() ) + String ( F("' with IP ") ) + WiFi.localIP().toString() );
+      break;
+    case SYSTEM_EVENT_STA_DISCONNECTED:
+      //
+      break;
+    default:
+      break;
+  }
+}
+#endif
 
 void setup() {
   initInternalLed();
@@ -2050,7 +2082,11 @@ void setup() {
   LittleFS.begin();
 
   configureWebServer();
+  #ifdef ESP8266
   wiFiEventHandler = WiFi.onStationModeConnected( &onWiFiConnected );
+  #else //ESP32 or ESP32S2
+  WiFi.onEvent( WiFiEvent );
+  #endif
   connectToWiFiAsync( true );
   startWebServer();
   initTimeClient();
