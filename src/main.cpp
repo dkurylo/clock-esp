@@ -395,44 +395,6 @@ void forceDisplaySync() {
 
 
 //time of day functionality
-bool isTimeClientInitialised = false;
-unsigned long timeClientUpdatedMillis = 0;
-void initTimeClient() {
-  if( WiFi.isConnected() && !isTimeClientInitialised ) {
-    timeClient.setUpdateInterval( DELAY_NTP_TIME_SYNC );
-    Serial.print( F("Starting NTP client...") );
-    timeClient.begin();
-    isTimeClientInitialised = true;
-    Serial.println( F(" done") );
-  }
-}
-
-void ntpProcessLoopTick() {
-  if( !WiFi.isConnected() ) return;
-  if( !isTimeClientInitialised ) {
-    initTimeClient();
-  }
-  if( isTimeClientInitialised ) {
-    unsigned long currentMillis = millis();
-    if( calculateDiffMillis( previousMillisNtpStatusCheck, currentMillis ) >= 10 ) {
-      NTPClient::Status ntpStatus = timeClient.update();
-
-      if( ntpStatus == NTPClient::STATUS_SUCCESS_RESPONSE ) {
-        timeClient.setUpdateInterval( DELAY_NTP_TIME_SYNC );
-        Serial.println( "NTP time sync completed" );
-        if( isCustomDateTimeSet ) {
-          isCustomDateTimeSet = false;
-        }
-        forceDisplaySync();
-      } else if( ntpStatus == NTPClient::STATUS_FAILED_RESPONSE ) {
-        timeClient.setUpdateInterval( DELAY_NTP_TIME_SYNC_RETRY );
-        Serial.println( "NTP time sync error" );
-      }
-      previousMillisNtpStatusCheck = currentMillis;
-    }
-  }
-}
-
 bool isWithinDstBoundaries( time_t dt ) {
   struct tm *timeinfo = gmtime(&dt);
 
@@ -955,6 +917,50 @@ void renderDisplay() {
     renderDisplayText( "  ", "  ", "  ", false );
   }
   display.update();
+}
+
+
+//NTP functionality
+bool isTimeClientInitialised = false;
+unsigned long timeClientUpdatedMillis = 0;
+void initTimeClient() {
+  if( WiFi.isConnected() && !isTimeClientInitialised ) {
+    timeClient.setUpdateInterval( DELAY_NTP_TIME_SYNC );
+    Serial.print( F("Starting NTP client...") );
+    timeClient.begin();
+    isTimeClientInitialised = true;
+    Serial.println( F(" done") );
+  }
+}
+
+void ntpProcessLoopTick() {
+  if( !WiFi.isConnected() ) return;
+  if( !isTimeClientInitialised ) {
+    initTimeClient();
+  }
+  if( isTimeClientInitialised ) {
+    unsigned long currentMillis = millis();
+    if( calculateDiffMillis( previousMillisNtpStatusCheck, currentMillis ) >= 10 ) {
+      NTPClient::Status ntpStatus = timeClient.update();
+
+      if( ntpStatus == NTPClient::STATUS_SUCCESS_RESPONSE ) {
+        timeClient.setUpdateInterval( DELAY_NTP_TIME_SYNC );
+        if( isCustomDateTimeSet ) {
+          isCustomDateTimeSet = false;
+        }
+
+        String hourStr, minuteStr, secondStr;
+        calculateTimeToShow( hourStr, minuteStr, secondStr, isSingleDigitHourShown );
+        Serial.println( F("NTP time sync completed. Time: ") + hourStr + ":" + minuteStr + ":" + secondStr + "." + timeClient.getSubSeconds() );
+
+        forceDisplaySync();
+      } else if( ntpStatus == NTPClient::STATUS_FAILED_RESPONSE ) {
+        timeClient.setUpdateInterval( DELAY_NTP_TIME_SYNC_RETRY );
+        Serial.println( F("NTP time sync error") );
+      }
+      previousMillisNtpStatusCheck = currentMillis;
+    }
+  }
 }
 
 
