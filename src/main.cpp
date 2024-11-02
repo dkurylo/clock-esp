@@ -25,11 +25,22 @@
 
 #define MAX_HARDWARE_TYPE MD_MAX72XX::FC16_HW
 #define MAX_MAX_DEVICES 4
-//#define MAX_DATA_PIN 0 //if using HW SPI then it's automatically MOSI 13
-//#define MAX_CLK_PIN 5 //if using HW SPI then it's automatically SCK 14
-#define MAX_CS_PIN 15 //if using HW SPI then it's SS 15 (not automatically)
 
+#ifdef ESP8266
+//#define MAX_DATA_PIN 0 //if using HW SPI then it's automatically MOSI 13 on ESP8266
+//#define MAX_CLK_PIN 5 //if using HW SPI then it's automatically SCK 14 on ESP8266
+#define MAX_CS_PIN 15 //if using HW SPI then it's SS 15 on ESP8266 (not automatically)
+#else //ESP32 or ESP32S2
+//#define MAX_DATA_PIN MOSI //if using HW SPI then it's automatically MOSI 11 on ESP32-S2
+//#define MAX_CLK_PIN SCK //if using HW SPI then it's automatically SCK 7 on ESP32-S2
+#define MAX_CS_PIN SS //if using HW SPI then it's SS 12 on ESP32-S2 (not automatically)
+#endif
+
+#ifdef ESP8266
 #define BRIGHTNESS_INPUT_PIN A0
+#else //ESP32 or ESP32S2
+#define BRIGHTNESS_INPUT_PIN 3
+#endif
 
 bool isNewBoard = false;
 const char* getFirmwareVersion() { const char* result = "1.00"; return result; }
@@ -54,6 +65,7 @@ const bool INVERT_INTERNAL_LED = true;
 #else //ESP32 or ESP32S2
 const bool INVERT_INTERNAL_LED = false;
 #endif
+
 const bool INTERNAL_LED_IS_USED = false;
 const uint16_t DELAY_INTERNAL_LED_ANIMATION_LOW = 59800;
 const uint16_t DELAY_INTERNAL_LED_ANIMATION_HIGH = 200;
@@ -63,8 +75,6 @@ const uint32_t DELAY_NTP_TIME_SYNC = 6 * 60 * 60 * 1000; //sync time every 6 hou
 const uint32_t DELAY_NTP_TIME_SYNC_RETRY = 2 * 60 * 60 * 1000; //sync time every 2 hours if regular sync fails
 bool isSlowSemicolonAnimation = false; //semicolon period, false = 60 blinks per minute; true = 30 blinks per minute
 const uint16_t DELAY_DISPLAY_ANIMATION = 20; //led animation speed, in ms
-
-const bool IS_LOW_LEVEL_BUZZER = true;
 
 //variables used in the code, don't change anything here
 char wiFiClientSsid[WIFI_SSID_MAX_LENGTH];
@@ -85,9 +95,15 @@ uint8_t animationTypeNumber = 0;
 uint8_t NUMBER_OF_ANIMATIONS_SUPPORTED = 5;
 
 //brightness settings
+#ifdef ESP8266
+const uint16_t SENSOR_BRIGHTNESS_NIGHT_LEVEL = 10; //ESP8266 has 10-bit ADC (0-1023)
+const uint16_t SENSOR_BRIGHTNESS_DAY_LEVEL = 350; //ESP8266 has 10-bit ADC (0-1023)
+#else //ESP32 or ESP32S2
+const uint16_t SENSOR_BRIGHTNESS_NIGHT_LEVEL = 80; //ESP32 has 12-bit ADC (0-4095); ESP32-S2 has 13-bit ADC (0-8191)
+const uint16_t SENSOR_BRIGHTNESS_DAY_LEVEL = 2800; //ESP32 has 12-bit ADC (0-4095); ESP32-S2 has 13-bit ADC (0-8191)
+#endif
+
 const uint16_t DELAY_SENSOR_BRIGHTNESS_UPDATE_CHECK = 100;
-const uint16_t SENSOR_BRIGHTNESS_NIGHT_LEVEL = 10;
-const uint16_t SENSOR_BRIGHTNESS_DAY_LEVEL = 350;
 const double SENSOR_BRIGHTNESS_LEVEL_HYSTERESIS = 0.10;
 const uint16_t SENSOR_BRIGHTNESS_SUSTAINED_LEVEL_HYSTERESIS_OVERRIDE_MILLIS = 10000;
 
