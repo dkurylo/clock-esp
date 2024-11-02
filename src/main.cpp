@@ -951,7 +951,7 @@ void ntpProcessLoopTick() {
 
         String hourStr, minuteStr, secondStr;
         calculateTimeToShow( hourStr, minuteStr, secondStr, isSingleDigitHourShown );
-        Serial.println( F("NTP time sync completed. Time: ") + hourStr + ":" + minuteStr + ":" + secondStr + "." + timeClient.getSubSeconds() );
+        Serial.println( String( F("NTP time sync completed. Time: ") ) + hourStr + ":" + minuteStr + ":" + secondStr + "." + timeClient.getSubSeconds() );
 
         forceDisplaySync();
       } else if( ntpStatus == NTPClient::STATUS_FAILED_RESPONSE ) {
