@@ -125,7 +125,7 @@ NTPClient::Status NTPClient::forceUpdate() {
 
         unsigned long millis = ( word(this->_packetBuffer[44], this->_packetBuffer[45]) ) * 1000UL >> 16;
 
-        this->_lastUpdate -= millis; //shift last update time by the amount of fractional seconds reported so that last update second starts at x1000 millis
+        this->_lastUpdate -= millis; //align with second start
 
         #ifdef DEBUG_NTPClient
           Serial.print( "NTP packet received" );
