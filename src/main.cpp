@@ -1978,11 +1978,11 @@ void handleWebServerGetMonitor() {
     "},"
     "\"ram\":{"
       "\"heap\":\"") ) + String( ESP.getFreeHeap() ) + String( F("\"") );
-    #ifdef ESP8266
-    content = content + String( F(","
-      "\"frag\":\"") ) + String( ESP.getHeapFragmentation() ) + String( F("\"") );
-    #endif
-    content = content + String( F(""
+      #ifdef ESP8266
+      content = content + String( F(","
+        "\"frag\":\"") ) + String( ESP.getHeapFragmentation() ) + String( F("\"") );
+      #endif
+      content = content + String( F(""
     "},"
     "\"cpu\":{"
       "\"freq\":\"") ) + String( ESP.getCpuFreqMHz() ) + String( F("\""
