@@ -92,7 +92,6 @@ char wiFiClientSsid[WIFI_SSID_MAX_LENGTH];
 char wiFiClientPassword[WIFI_PASSWORD_MAX_LENGTH];
 
 uint8_t displayFontTypeNumber = 0;
-const uint8_t NUMBER_OF_FONTS_SUPPORTED = 3;
 bool isDisplayBoldFontUsed = true;
 bool isDisplayCompactLayoutUsed = false;
 bool isDisplaySecondsShown = false;
@@ -253,7 +252,8 @@ const uint16_t eepromIsSlowSemicolonAnimationIndex = eepromIsRotateDisplayIndex 
 const uint16_t eepromIsClockAnimatedIndex = eepromIsSlowSemicolonAnimationIndex + 1;
 const uint16_t eepromAnimationTypeNumberIndex = eepromIsClockAnimatedIndex + 1;
 const uint16_t eepromIsCompactLayoutShownIndex = eepromAnimationTypeNumberIndex + 1;
-const uint16_t eepromLastByteIndex = eepromIsCompactLayoutShownIndex + 1;
+const uint16_t eepromCustomFontIndex = eepromIsCompactLayoutShownIndex + 1;
+const uint16_t eepromLastByteIndex = eepromCustomFontIndex + TCFonts::FONT_SYMBOLS * TCFonts::FONT_HEIGHT;
 
 const uint16_t EEPROM_ALLOCATED_SIZE = eepromLastByteIndex;
 void initEeprom() {
@@ -328,6 +328,37 @@ bool writeEepromBoolValue( const uint16_t& eepromIndex, bool newValue ) {
   return eepromWritten;
 }
 
+void readEepromFontData() {
+  uint8_t (*fontToUse)[TCFonts::FONT_HEIGHT] = TCFonts::getCustomFont();
+  for( uint16_t symbolIndex = 0; symbolIndex < TCFonts::FONT_SYMBOLS; symbolIndex++ ) {
+    for( uint8_t byteIndex = 0; byteIndex < TCFonts::FONT_HEIGHT; byteIndex++ ) {
+      uint16_t eepromIndex = eepromCustomFontIndex + ( symbolIndex * TCFonts::FONT_HEIGHT ) + byteIndex;
+      fontToUse[symbolIndex][byteIndex] = EEPROM.read( eepromIndex );
+    }
+  }
+}
+
+bool writeEepromFontData( bool doErase ) {
+  bool eepromWritten = false;
+  uint8_t (*fontToUse)[TCFonts::FONT_HEIGHT] = TCFonts::getCustomFont();
+  for( uint16_t symbolIndex = 0; symbolIndex < TCFonts::FONT_SYMBOLS; symbolIndex++ ) {
+    for( uint8_t byteIndex = 0; byteIndex < TCFonts::FONT_HEIGHT; byteIndex++ ) {
+      uint16_t eepromIndex = eepromCustomFontIndex + ( symbolIndex * TCFonts::FONT_HEIGHT ) + byteIndex;
+      uint8_t byteStored = EEPROM.read( eepromIndex );
+      uint8_t byteToStore = doErase ? 0 : fontToUse[symbolIndex][byteIndex];
+      if( byteStored != byteToStore ) {
+        eepromWritten = true;
+        EEPROM.write( eepromIndex, byteToStore );
+      }
+    }
+  }
+  if( eepromWritten ) {
+    EEPROM.commit();
+    delay( 20 );
+  }
+  return eepromWritten;
+}
+
 void loadEepromData() {
   readEepromBoolValue( eepromIsNewBoardIndex, isNewBoard, true );
   if( !isNewBoard ) {
@@ -335,7 +366,7 @@ void loadEepromData() {
     readEepromCharArray( eepromWiFiSsidIndex, wiFiClientSsid, WIFI_SSID_MAX_LENGTH, true );
     readEepromCharArray( eepromWiFiPasswordIndex, wiFiClientPassword, WIFI_PASSWORD_MAX_LENGTH, true );
     readEepromIntValue( eepromDisplayFontTypeNumberIndex, displayFontTypeNumber, true );
-    if( displayFontTypeNumber > NUMBER_OF_FONTS_SUPPORTED - 1 ) displayFontTypeNumber = 0;
+    if( displayFontTypeNumber > TCFonts::NUMBER_OF_FONTS_SUPPORTED - 1 ) displayFontTypeNumber = 0;
     readEepromBoolValue( eepromIsFontBoldUsedIndex, isDisplayBoldFontUsed, true );
     readEepromBoolValue( eepromIsDisplaySecondsShownIndex, isDisplaySecondsShown, true );
     readEepromIntValue( eepromDisplayDayBrightnessIndex, displayDayBrightness, true );
@@ -357,6 +388,7 @@ void loadEepromData() {
     readEepromIntValue( eepromAnimationTypeNumberIndex, animationTypeNumber, true );
     if( animationTypeNumber > NUMBER_OF_ANIMATIONS_SUPPORTED - 1 ) animationTypeNumber = 0;
     readEepromBoolValue( eepromIsCompactLayoutShownIndex, isDisplayCompactLayoutUsed, true );
+    readEepromFontData();
 
   } else { //fill EEPROM with default values when starting the new board
     writeEepromBoolValue( eepromIsNewBoardIndex, false );
@@ -376,6 +408,7 @@ void loadEepromData() {
     writeEepromBoolValue( eepromIsClockAnimatedIndex, isClockAnimated );
     writeEepromIntValue( eepromAnimationTypeNumberIndex, animationTypeNumber );
     writeEepromBoolValue( eepromIsCompactLayoutShownIndex, isDisplayCompactLayoutUsed );
+    writeEepromFontData( true );
 
     isNewBoard = false;
   }
@@ -583,7 +616,7 @@ void renderDisplayText( String hourStr, String minuteStr, String secondStr, bool
 
   char charsAnimatable[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' };
   uint8_t charsAnimatableCount = sizeof(charsAnimatable) / sizeof(charsAnimatable[0]);
-  unsigned long displayAnimationLengthMillis = 8 * displayAnimationStepLengthMillis;
+  unsigned long displayAnimationLengthMillis = TCFonts::FONT_HEIGHT * displayAnimationStepLengthMillis;
   if( animationTypeNumber == 0 || animationTypeNumber == 1 || animationTypeNumber == 3 ) {
     displayAnimationLengthMillis += displayAnimationStepLengthMillis;
   }
@@ -1172,7 +1205,7 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
       ".ex.exc{height:0;margin-top:0;}.ex.exc>*{visibility:hidden;}"
       ".ex.exc.exon{height:inherit;}.ex.exc.exon>*{visibility:initial;}"
       "label{flex:none;padding-right:0.6em;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
-      "input,select{width:100%;padding:0.1em 0.2em;}"
+      "input:not(.fixed),select:not(.fixed){width:100%;padding:0.1em 0.2em;}"
       "select.mid{text-align:center;}"
       "input[type=\"radio\"],input[type=\"checkbox\"]{flex:none;margin:0.1em 0;width:calc(var(--f)*1.2);height:calc(var(--f)*1.2);}"
       "input[type=\"radio\"]+label,input[type=\"checkbox\"]+label{padding-left:0.6em;padding-right:initial;flex:1 1 auto;max-width:initial;}"
@@ -1182,7 +1215,7 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
       "input[type=\"color\"]{padding:0;height:var(--f);border-radius:0;}"
       "input[type=\"color\"]::-webkit-color-swatch-wrapper{padding:2px;}"
       "output{padding-left:0.6em;}"
-      "button{width:100%;padding:0.2em;}"
+      "button:not(.fixed){width:100%;padding:0.2em;}"
       "a{color:#AAA;}"
       ".sub{text-wrap:nowrap;}"
       ".sub:not(:last-of-type){padding-right:0.6em;}"
@@ -1315,7 +1348,7 @@ void handleWebServerGet() {
   "<div class=\"fx\">"
     "<h2>Налаштування дисплея:</h2>"
     "<div class=\"fi pl\"><div id=\"exw\"><div id=\"exdw\"></div></div></div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("Вид шрифта"), HTML_INPUT_RANGE, String(displayFontTypeNumber).c_str(), HTML_PAGE_FONT_TYPE_NAME, HTML_PAGE_FONT_TYPE_NAME, 0, NUMBER_OF_FONTS_SUPPORTED - 1, 0, false, displayFontTypeNumber, "onchange=\"pv();\"", "" ) + String( F("</div>"
+    "<div class=\"fi pl\">") ) + getHtmlInput( F("Вид шрифта"), HTML_INPUT_RANGE, String(displayFontTypeNumber).c_str(), HTML_PAGE_FONT_TYPE_NAME, HTML_PAGE_FONT_TYPE_NAME, 0, TCFonts::NUMBER_OF_FONTS_SUPPORTED - 1, 0, false, displayFontTypeNumber, "onchange=\"pv();\"", "" ) + String( F("<span class=\"pl\"><a href=\"/fontedit\">Редактор</a></span></div>"
     "<div class=\"fi pl\">") ) + getHtmlInput( F("Жирний шрифт"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_BOLD_FONT_NAME, HTML_PAGE_BOLD_FONT_NAME, 0, 0, 0, false, isDisplayBoldFontUsed, "onchange=\"pv();\"", "" ) + String( F("</div>"
     "<div class=\"fi pl\">") ) + getHtmlInput( F("Показувати секунди"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_SHOW_SECS_NAME, HTML_PAGE_SHOW_SECS_NAME, 0, 0, 0, false, isDisplaySecondsShown, "onchange=\"pv();\"", "" ) + String( F("</div>"
     "<div class=\"fi pl\">") ) + getHtmlInput( F("Показувати час без переднього нуля"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_SHOW_SINGLE_DIGIT_HOUR_NAME, HTML_PAGE_SHOW_SINGLE_DIGIT_HOUR_NAME, 0, 0, 0, false, isSingleDigitHourShown, "onchange=\"pv();\"", "" ) + String( F("</div>"
@@ -1519,7 +1552,7 @@ void handleWebServerPost() {
   String htmlPageDisplayFontTypeNumberReceived = wifiWebServer.arg( HTML_PAGE_FONT_TYPE_NAME );
   uint displayFontTypeNumberReceived = htmlPageDisplayFontTypeNumberReceived.toInt();
   bool displayFontTypeNumberReceivedPopulated = false;
-  if( displayFontTypeNumberReceived >= 0 && displayFontTypeNumberReceived <= (uint)NUMBER_OF_FONTS_SUPPORTED - 1 ) {
+  if( displayFontTypeNumberReceived >= 0 && displayFontTypeNumberReceived <= (uint)TCFonts::NUMBER_OF_FONTS_SUPPORTED - 1 ) {
     displayFontTypeNumberReceivedPopulated = true;
   }
 
@@ -1737,6 +1770,7 @@ void handleWebServerGetPreview() {
   String fontNumberStr = wifiWebServer.arg("f");
   if( !fontNumberStr.length() ) fontNumberStr = "0";
   uint8_t fontNumber = static_cast<uint8_t>( atoi( fontNumberStr.c_str() ) );
+  if( fontNumber > TCFonts::NUMBER_OF_FONTS_SUPPORTED - 1 ) fontNumber = TCFonts::NUMBER_OF_FONTS_SUPPORTED - 1;
   String isBoldStr = wifiWebServer.arg("b");
   bool isBold = isBoldStr == String( F("1") ) || isBoldStr == String( F("true") ) || isBoldStr == String( F("TRUE") ) || isBoldStr == String( F("True") );
   String isSecondsShownStr = wifiWebServer.arg("s");
@@ -2092,6 +2126,307 @@ void handleWebServerGetFavIcon() {
   }
 }
 
+uint16_t getFontContentLength() {
+  return 3 + TCFonts::FONT_SYMBOLS * TCFonts::FONT_HEIGHT;
+}
+
+const String fontIdentifier = "TC1";
+
+void handleWebServerGetFontEditor() {
+  String content;
+  content.reserve( 13000 ); //currently it's around 11600
+  addHtmlPageStart( content );
+  content += String( F("<style>"
+    ".wrp{width:96vw;min-width:none;max-width:none;}"
+    ".fw{font-size:1vw;user-select:none;}"
+    ".hlw,.slw{display:flex;margin-top:10px;gap:10px;}"
+    ".hlw>div,.slw>div{width:calc(100%/9);}"
+    ".hw.prog_p1,.sw.prog_p1{display:none;}"
+    ".hw{align-self:center;text-align:center;}"
+    ".shw{align-self:center;text-align:center;font-size:3vw;font-weight:bold;}"
+    ".sh{background-color:#555;border:1px solid #555;padding:5px;}"
+    ".pxl{display:flex;}"
+    ".pxl .px{flex:1;border:1px solid #555;aspect-ratio:1;}"
+    ".pxl .px:not(:first-child){border-left:none;}"
+    ".pxl:not(:first-child) .px{border-top:none;}"
+    ".px.px_off{background-color:#000;}"
+    ".px.px_on{background-color:#0C0;}"
+    ".px.x0, .px.x1{display:none;}"
+    ".sw.prog_p1 .px.y0,.sw.prog_p1 .px.y1,"
+    ".sw.hhmm_1.width_w0 .px.x2,.sw.hhmm_1.width_w0 .px.x3,"
+    ".sw.hhmm_0 .px.x2,.sw.hhmm_0 .px.x3,"
+    ".sw.hhmm_0.width_w0 .px.x2,.sw.hhmm_0.width_w0 .px.x3,.sw.hhmm_0.width_w0 .px.x4,"
+    ".slw.s_cf .px.x2,.slw.s_cf .px.x3,.slw.s_cf .px.x4,.slw.s_cf .px.x5,.slw.s_cf .px.x6,"
+    ".slw.s_cl .px.x2,.slw.s_cl .px.x3,.slw.s_cl .px.x4,.slw.s_cl .px.x5,.slw.s_cl .px.x6,"
+    ".slw.s_cu .px.x2,.slw.s_cu .px.x3,.slw.s_cu .px.x4,.slw.s_cu .px.x5,.slw.s_cu .px.x6{background-color:#555;pointer-events:none;}"
+  "</style>"
+  "<script>"
+    "let fontId='") ) + fontIdentifier + String( F("';"
+    "let fontSizeBytes=") ) + String( getFontContentLength() ) + String( F(";"
+    "let fontHeight=") ) + String( TCFonts::FONT_HEIGHT ) + String( F(";"
+    "let symbols=[{nm:'1',txt:'1'},{nm:'2',txt:'2'},{nm:'3',txt:'3'},{nm:'4',txt:'4'},{nm:'5',txt:'5'},{nm:'6',txt:'6'},{nm:'7',txt:'7'},{nm:'8',txt:'8'},{nm:'9',txt:'9'},{nm:'0',txt:'0'},{nm:'-',txt:'-'},{nm:'cf',txt:':'},{nm:'cl',txt:'.'},{nm:'cu',txt:'˙'}];"
+    "let attrs=[{nm:'hhmm',s1:'1',t1:'HH:MM',s0:'0',t0:'SS'},{nm:'prog',s1:'p0',t1:'',s0:'p1',t0:''},{nm:'width',s1:'w1',t1:'Wide',s0:'w0',t0:'Thin'},{nm:'thick',s1:'b0',t1:'Normal',s0:'b1',t0:'Bold'}];"
+    "const gid=((id)=>document.getElementById(id));"
+    "const gcl=((cl,el)=>[...(el?el:document).querySelectorAll(`${cl}`)]);"
+    "const getPixelsDom=(classes=>{"
+      "let res='';"
+      "for(let y=0;y<=7;y++){"
+          "res+='<div class=\"pxl\">';"
+          "for(let x=7;x>=0;x--){"
+              "res+='<div data-y=\"'+y+'\" data-x=\"'+x+'\" class=\"px y'+y+' x'+x+'\"></div>';"
+          "}"
+          "res+='</div>';"
+      "}"
+      "return res;"
+    "});"
+    "const getSymbols=((attrs,classes)=>{"
+      "if(!attrs.length){return[classes.join(' ')];}"
+      "return[...getSymbols([...attrs.slice(1)],[...classes,attrs[0].nm+'_'+attrs[0].s1]),...getSymbols([...attrs.slice(1)],[...classes,attrs[0].nm+'_'+attrs[0].s0])];"
+    "});"
+    "const getSymbolsDom=(()=>{return getSymbols(attrs,[]).reduce((res,item)=>res+'<div class=\"sw '+item+'\">'+getPixelsDom(item)+'</div>','');});"
+    "const getHeaders=((attrs,classes,texts)=>{"
+      "if(!attrs.length){return[{classes:classes.join(' '),txt:texts}];}"
+      "return[...getHeaders([...attrs.slice(1)],[...classes,attrs[0].nm+'_'+attrs[0].s1],[...texts,attrs[0].t1]),...getHeaders([...attrs.slice(1)],[...classes,attrs[0].nm+'_'+attrs[0].s0],[...texts,attrs[0].t0])];"
+    "});"
+    "const getHeadersDom=(()=>{return getHeaders(attrs,[],[]).reduce((res, item)=>res+'<div class=\"hw '+item.classes+'\">'+item.txt.map(text=>'<div>'+text+'</div>').join('')+'</div>','');});"
+    "let btnDown = false;"
+    "let btnAdds = false;"
+    "const enableEdit=(()=>{"
+      "document.addEventListener('mousedown',function(){btnDown=true;});"
+      "document.addEventListener('mouseup',function(){btnDown=false;});"
+      "gcl('.px').forEach(px=>{"
+        "px.addEventListener('mousedown',function(){"
+          "btnAdds=px.classList.contains('px_off');"
+          "px.classList.toggle('px_on');"
+          "px.classList.toggle('px_off');"
+        "});"
+        "px.addEventListener('mouseover',function(){"
+          "if(!btnDown)return;"
+          "if((!btnAdds||px.classList.contains('px_on'))&&(btnAdds||px.classList.contains('px_off')))return;"
+          "px.classList.toggle('px_on');"
+          "px.classList.toggle('px_off');"
+        "});"
+      "});"
+    "});"
+    "const createDom=(()=>{"
+      "let dom='<div class=\"fw\"><div class=\"hlw\"><div></div>'+getHeadersDom()+'</div>';"
+      "symbols.forEach(s=>{"
+        "dom+='<div class=\"slw s_'+s.nm+'\"><div class=\"shw\"><span class=\"sh\">'+s.txt+'</span></div>'+getSymbolsDom()+'</div>';"
+      "});"
+      "dom+='</div>';"
+      "gid('fanchor').innerHTML=dom;"
+      ""
+      "document.getElementById('uploadFileData').addEventListener('change',function(event) {"
+        "if(!event.target.files.length)return;"
+        "let file=event.target.files[0];"
+        "if(file){"
+          "let reader=new FileReader();"
+          "reader.onload=function(e){"
+            "let dt=new Uint8Array(e.target.result);"
+            "populateFont(dt);"
+            "document.getElementById('uploadFileData').value='';"
+          "};"
+          "reader.onerror=function(){"
+            "alert('Error reading file!');"
+          "};"
+          "reader.readAsArrayBuffer(file);"
+        "}"
+      "});"
+    "});"
+    "const populateFont=(dt=>{"
+      "let ss=[];"
+      "let fontIdRes=String.fromCharCode(dt[0],dt[1],dt[2]);"
+      "if(fontIdRes!=fontId){alert('Font is not supported');return;}"
+      "for(let i=fontId.length;i<dt.length;i+=fontHeight){"
+        "ss.push(dt.slice(i,i+fontHeight));"
+      "}"
+      "gcl('.sw').forEach((sw,swi)=>{"
+        "gcl('.pxl',sw).forEach((pl,pli)=>{"
+          "gcl('.px',pl).forEach(px=>{"
+              "let bitIdx=px.dataset.x;"
+              "let fntLine=ss[swi][pli];"
+              "let isOn=(fntLine>>bitIdx)&1;"
+              "if(isOn==1){"
+                "px.classList.add('px_on');"
+                "px.classList.remove('px_off');"
+              "}else{"
+                "px.classList.add('px_off');"
+                "px.classList.remove('px_on');"
+              "}"
+          "});"
+        "});"
+      "});"
+    "});"
+    "const getFont=(()=>{"
+      "let font=new Uint8Array(fontSizeBytes);"
+      "let byteIdx=0;"
+      "font.set(new TextEncoder().encode(fontId), byteIdx);"
+      "byteIdx+=fontId.length;"
+      "gcl('.sw').forEach((sw,swi)=>{"
+        "gcl('.pxl',sw).forEach((pl,pli)=>{"
+          "let lineByte=0;"
+          "gcl('.px',pl).forEach(px=>{"
+            "let bitIdx=parseInt(px.dataset.x,10);"
+            "let isOn=px.classList.contains('px_on');"
+            "if(isOn){"
+              "lineByte|=(1<<bitIdx);"
+            "}"
+          "});"
+          "font.set([lineByte],byteIdx);"
+          "byteIdx++;"
+        "});"
+      "});"
+      "return font;"
+    "});"
+    "const readEspData=(isInit=>{"
+      "fetch('/font?f='+gid('fontPicker').value).then(res=>{"
+        "return res.ok?res.arrayBuffer():null;"
+      "}).then(dtb=>{"
+        "if(dtb==null)return;"
+        "let dt=new Uint8Array(dtb);"
+        "populateFont(dt);"
+        "if(isInit){"
+          "enableEdit();"
+        "}"
+      "}).catch(e=>{"
+        "console.error('Error: ',e);"
+      "});"
+    "});"
+    "const saveEspData=(()=>{"
+      "let font=getFont();"
+      "fetch('/font',{"
+        "method:'POST',"
+        "headers:{"
+          "'Content-Type':'application/octet-stream',"
+          "'Content-Length':font.length.toString()"
+        "},"
+        "body:font"
+      "}).then(res=>{"
+        "if(!res.ok){alert('Failed to upload font');}"
+      "}).catch(e=>{"
+        "console.error('Error: ',e);"
+      "});"
+    "});"
+    "const downloadFileData=(()=>{"
+      "let blob=new Blob([getFont()],{type:'application/octet-stream'});"
+      "let url=URL.createObjectURL(blob);"
+      "let a=document.createElement('a');"
+      "a.href=url;"
+      "a.download='font.tcf';"
+      "document.body.appendChild(a);"
+      "a.click();"
+      "document.body.removeChild(a);"
+      "URL.revokeObjectURL(url);"
+    "});"
+    "document.addEventListener(\"DOMContentLoaded\",()=>{"
+      "createDom();"
+      "readEspData(true);"
+    "});"
+  "</script>"
+  "<div class=\"ft\">"
+    "<div class=\"fx\">"
+      "<div>"
+        "<button class=\"fixed\" onclick=\"gid('uploadFileData').click()\">Прочитати з файла</button><input type=\"file\" class=\"fixed\" id=\"uploadFileData\" accept=\".tcf\" style=\"display:none;\"/>"
+        "<button class=\"fixed\" onclick=\"downloadFileData();\">Зберегти в файл</button>"
+      "</div>"
+      "<div style=\"flex-grow:1;\">"
+      "</div>"
+      "<div>"
+        "<select id=\"fontPicker\" class=\"fixed\" style=\"padding:1px 1px 2px 1px;\">"
+          "<option value=\"0\">Шрифт 0</option>"
+          "<option value=\"1\">Шрифт 1</option>"
+          "<option value=\"2\">Шрифт 2</option>"
+          "<option value=\"3\" selected>Шрифт 3 (свій)</option>"
+        "</select>"
+        "<button class=\"fixed\" onclick=\"readEspData(false);\">Прочитати з ESP</button>"
+        "<button class=\"fixed\" onclick=\"saveEspData();\">Зберегти в ESP</button>"
+        "<span class=\"i\" title=\"Збереження завжди йде в Шрифт 3 (свій)!\"></span>"
+      "</div>"
+    "</div>"
+  "</div>"
+  "<div id=\"fanchor\"></div>"
+  "<div class=\"ft\">"
+    "<div class=\"fx\">"
+      "<span>"
+        "<span class=\"sub\"><a href=\"/\">Назад</a></span>"
+      "</span>"
+    "</div>"
+  "</div>") );
+  addHtmlPageEnd( content );
+
+  wifiWebServer.sendHeader( String( F("Content-Length") ).c_str(), String( content.length() ) );
+  wifiWebServer.send( 200, getContentType( F("html") ), content );
+}
+
+void handleWebServerGetFont() {
+  String fontNumberStr = wifiWebServer.arg("f");
+  if( !fontNumberStr.length() ) fontNumberStr = String( TCFonts::NUMBER_OF_FONTS_SUPPORTED - 1 );
+  uint8_t fontNumber = static_cast<uint8_t>( atoi( fontNumberStr.c_str() ) );
+  if( fontNumber > TCFonts::NUMBER_OF_FONTS_SUPPORTED - 1 ) fontNumber = TCFonts::NUMBER_OF_FONTS_SUPPORTED - 1;
+
+  wifiWebServer.setContentLength( getFontContentLength() ); //Chunked transfer encoding
+  wifiWebServer.send( 200, "application/octet-stream", "" );
+
+  std::pair<const uint8_t (*)[TCFonts::FONT_HEIGHT], bool> fontInfo = TCFonts::getFont( fontNumber );
+  const uint8_t (*fontToUse)[TCFonts::FONT_HEIGHT] = fontInfo.first;
+  bool isCustomFont = fontInfo.second;
+
+  uint8_t buffer[256];
+  size_t index = 0;
+
+  for( size_t i = 0; i < fontIdentifier.length(); i++ ) {
+    buffer[index++] = fontIdentifier[i];
+  }
+  for( size_t i = 0; i < TCFonts::FONT_SYMBOLS; i++ ) {
+      for( size_t j = 0; j < TCFonts::FONT_HEIGHT; j++ ) {
+          if( isCustomFont ) {
+            buffer[index++] = fontToUse[i][j];
+          } else {
+            buffer[index++] = pgm_read_byte(&fontToUse[i][j]);
+          }
+          if( index == sizeof(buffer) ) {
+              wifiWebServer.client().write( buffer, index );
+              index = 0;
+          }
+      }
+  }
+  if( index > 0 ) {
+      wifiWebServer.client().write( buffer, index );
+  }
+
+  wifiWebServer.client().stop();
+}
+
+void handleWebServerPostFont() {
+  String body = wifiWebServer.arg("plain");
+
+  if( body.length() != getFontContentLength() ) {
+    wifiWebServer.send( 400, getContentType("txt"), String( F("Data size is incorrect") ) );
+    return;
+  }
+
+  String receivedIdentifier = body.substring(0, 3);
+  if( receivedIdentifier != fontIdentifier ) {
+    wifiWebServer.send( 400, getContentType("txt"), String( F("Incorrect data loaded. Is it a font?") ) );
+    return;
+  }
+
+  uint16_t remainingDataStart = fontIdentifier.length();
+  uint8_t (*fontToUse)[TCFonts::FONT_HEIGHT] = new uint8_t[TCFonts::FONT_SYMBOLS][TCFonts::FONT_HEIGHT];
+  uint16_t byteIndex = remainingDataStart;
+  for( uint16_t i = 0; i < TCFonts::FONT_SYMBOLS; i++ ) {
+      for( uint8_t j = 0; j < TCFonts::FONT_HEIGHT; j++ ) {
+          fontToUse[i][j] = body[byteIndex++];
+      }
+  }
+  TCFonts::setCustomFont( fontToUse );
+  delete[] fontToUse;
+
+  writeEepromFontData( false );
+
+  wifiWebServer.send( 200, getContentType("txt"), String( F("OK") ) );
+}
+
 void handleWebServerRedirect() {
   wifiWebServer.sendHeader( F("Location"), String( F("http://") ) + WiFi.softAPIP().toString() );
   wifiWebServer.send( 302, getContentType( F("html") ), "" );
@@ -2126,6 +2461,9 @@ void configureWebServer() {
   wifiWebServer.on( "/ping", HTTP_GET, handleWebServerGetPing );
   wifiWebServer.on( "/monitor", HTTP_GET, handleWebServerGetMonitor );
   wifiWebServer.on( "/favicon.ico", HTTP_GET, handleWebServerGetFavIcon );
+  wifiWebServer.on( "/fontedit", HTTP_GET, handleWebServerGetFontEditor );
+  wifiWebServer.on( "/font", HTTP_GET, handleWebServerGetFont );
+  wifiWebServer.on( "/font", HTTP_POST, handleWebServerPostFont );
   wifiWebServer.onNotFound([]() {
     handleWebServerRedirect();
   });
