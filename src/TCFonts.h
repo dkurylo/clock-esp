@@ -2,14 +2,15 @@
 #include <vector>
 #include <map>
 
-#include "TCFont0.h"
 #include "TCFont1.h"
 #include "TCFont2.h"
+#include "TCFont3.h"
+#include "TCFont4.h"
 
 class TCFonts {
 
   public:
-    static const uint8_t NUMBER_OF_FONTS_SUPPORTED = 4;
+    static const uint8_t NUMBER_OF_FONTS_SUPPORTED = 5;
     static const uint8_t FONT_HEIGHT = 8;
     static const uint16_t FONT_SYMBOLS = 16*14;
 

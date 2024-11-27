@@ -2,10 +2,11 @@
 
 uint8_t TCFonts::getSymbolWidth( uint8_t fontIndex, char symbol, bool isCompact, bool isWide, bool isSmall ) {
   switch( fontIndex ) {
-    case 0:
     case 1:
     case 2:
-    case 3: {
+    case 3:
+    case 4:
+    case 5: {
       switch( isSmall ) {
         case false: {
           switch( symbol ) {
@@ -67,10 +68,11 @@ uint8_t TCFonts::getSymbolWidth( uint8_t fontIndex, char symbol, bool isCompact,
 
 uint8_t TCFonts::getSymbolLp( uint8_t fontIndex, char symbol, bool isCompact, bool isWide, bool isSmall ) {
   switch( fontIndex ) {
-    case 0:
     case 1:
     case 2:
-    case 3: {
+    case 3:
+    case 4:
+    case 5: {
       switch( isSmall ) {
         case false: {
           switch( symbol ) {
@@ -153,10 +155,11 @@ uint8_t TCFonts::getSymbolLp( uint8_t fontIndex, char symbol, bool isCompact, bo
 
 uint8_t TCFonts::getSymbolRp( uint8_t fontIndex, char symbol, bool isCompact, bool isWide, bool isSmall ) {
   switch( fontIndex ) {
-    case 0:
     case 1:
     case 2:
-    case 3: {
+    case 3:
+    case 4:
+    case 5: {
       switch( isSmall ) {
         case false: {
           switch( symbol ) {
@@ -237,6 +240,23 @@ uint8_t TCFonts::getSymbolRp( uint8_t fontIndex, char symbol, bool isCompact, bo
   return 0;
 }
 
+
+std::pair<const uint8_t (*)[TCFonts::FONT_HEIGHT], bool> TCFonts::getFont(uint8_t fontIndex) {
+    if( fontIndex == 1 ) {
+      return { TCFont1::font, false };
+    } else if( fontIndex == 2 ) {
+      return { TCFont2::font, false };
+    } else if ( fontIndex == 3 ) {
+      return { TCFont3::font, false };
+    } else if ( fontIndex == 4 ) {
+      return { TCFont4::font, false };
+    } else if ( fontIndex == 5 ) {
+      return { TCFonts::customFont, true };
+    } else {
+      return { TCFont1::font, false }; // Default to TCFont1
+    }
+}
+
 std::map<char, uint8_t> TCFonts::charToCharIndex = {
   { '1', 0 },
   { '2', 1 },
@@ -253,20 +273,6 @@ std::map<char, uint8_t> TCFonts::charToCharIndex = {
   { '\b', 12 },
   { '\f', 13 },
 };
-
-std::pair<const uint8_t (*)[TCFonts::FONT_HEIGHT], bool> TCFonts::getFont(uint8_t fontIndex) {
-    if( fontIndex == 0 ) {
-      return { TCFont0::font, false };
-    } else if( fontIndex == 1 ) {
-      return { TCFont1::font, false };
-    } else if ( fontIndex == 2 ) {
-      return { TCFont2::font, false };
-    } else if ( fontIndex == 3 ) {
-      return { TCFonts::customFont, true };
-    } else {
-      return { TCFont0::font, false }; // Default to TCFont0
-    }
-}
 
 std::vector<uint8_t> TCFonts::getSymbol( uint8_t fontIndex, char symbol, bool isCompact, bool isBold, bool isWide, bool isSmall, bool isProgress ) {
   std::pair<const uint8_t (*)[TCFonts::FONT_HEIGHT], bool> fontInfo = TCFonts::getFont(fontIndex);
@@ -325,9 +331,11 @@ std::vector<uint8_t> TCFonts::getSymbol( uint8_t fontIndex, char symbol, bool is
 
 
 uint8_t TCFonts::customFont[TCFonts::FONT_SYMBOLS][TCFonts::FONT_HEIGHT]; //pre-allocated RAM for custom font
+
 uint8_t (*TCFonts::getCustomFont())[TCFonts::FONT_HEIGHT] {
   return TCFonts::customFont;
 }
+
 void TCFonts::setCustomFont( uint8_t (*fontToUse)[TCFonts::FONT_HEIGHT] ) {
     for( size_t i = 0; i < TCFonts::FONT_SYMBOLS; i++ ) {
         for( size_t j = 0; j < TCFonts::FONT_HEIGHT; j++ ) {
