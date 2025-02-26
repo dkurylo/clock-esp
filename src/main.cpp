@@ -1981,28 +1981,69 @@ void handleWebServerGetPing() {
 }
 
 void handleWebServerGetMonitor() {
+  time_t dt = 0;
+  if( timeCanBeCalculated() ) {
+    if( timeClient.isTimeSet() ) {
+      dt = timeClient.getEpochTime();
+    } else if( isCustomDateTimeSet ) {
+      unsigned long currentMillis = millis();
+      if( currentMillis >= customDateTimeReceivedAt && customDateTimePrevMillis < customDateTimeReceivedAt ) {
+        unsigned long wrappedSeconds = ULONG_MAX / 1000 + 1;
+        customDateTimeReceivedAt = customDateTimeReceivedAt - ( 1000 - ULONG_MAX % 1000 );
+        customDateTimeReceivedSeconds = customDateTimeReceivedSeconds + wrappedSeconds;
+      }
+      customDateTimePrevMillis = currentMillis;
+      unsigned long timeDiff = calculateDiffMillis( customDateTimeReceivedAt, currentMillis );
+      dt = customDateTimeReceivedSeconds + timeDiff / 1000;
+    }
+  }
+  struct tm *timeinfo = gmtime(&dt);
+
+  String hourStr, minuteStr, secondStr;
+  if( timeCanBeCalculated() ) {
+    struct tm* dtStruct = localtime(&dt);
+    uint8_t hour = dtStruct->tm_hour;
+    hour += isWithinDstBoundaries( dt ) ? 3 : 2;
+    if( hour >= 24 ) {
+      hour = hour - 24;
+    }
+    hourStr = ( hour < 10 ? "0" : "" ) + String( hour );
+    uint8_t minute = dtStruct->tm_min;
+    minuteStr = ( minute < 10 ? "0" : "" ) + String( minute );
+    uint8_t second = dtStruct->tm_sec;
+    secondStr = ( second < 10 ? "0" : "" ) + String( second );
+  }
+
   String content = String( F(""
-  "{"
-    "\"net\":{"
-      "\"host\":\"") ) + getFullWiFiHostName() + String( F("\""
-    "},"
-    "\"brt\":{"
-      "\"cur\":") ) + String( analogRead( BRIGHTNESS_INPUT_PIN ) ) + String( F(","
-      "\"avg\":") ) + String( sensorBrightnessAverage ) + String( F(","
-      "\"req\":") ) + String( displayCurrentBrightness ) + String( F(","
-      "\"dsp\":") ) + String( static_cast<uint8_t>( round( displayPreviousBrightness ) ) ) + String( F(""
-    "},"
-    "\"ram\":{"
-      "\"heap\":\"") ) + String( ESP.getFreeHeap() ) + String( F("\"") );
+  "{\n"
+    "\t\"net\": {\n"
+      "\t\t\"host\": \"") ) + getFullWiFiHostName() + String( F("\"\n"
+    "\t},\n"
+    "\t\"brt\": {\n"
+      "\t\t\"cur\": ") ) + String( analogRead( BRIGHTNESS_INPUT_PIN ) ) + String( F(",\n"
+      "\t\t\"avg\": ") ) + String( sensorBrightnessAverage ) + String( F(",\n"
+      "\t\t\"req\": ") ) + String( displayCurrentBrightness ) + String( F(",\n"
+      "\t\t\"dsp\": ") ) + String( static_cast<uint8_t>( round( displayPreviousBrightness ) ) ) + String( F("\n"
+    "\t},\n"
+    "\t\"ram\": {\n"
+      "\t\t\"heap\": ") ) + String( ESP.getFreeHeap() ) + String( F("") );
       #ifdef ESP8266
-      content = content + String( F(","
-        "\"frag\":\"") ) + String( ESP.getHeapFragmentation() ) + String( F("\"") );
+      content = content + String( F(",\n"
+        "\t\t\"frag\": ") ) + String( ESP.getHeapFragmentation() ) + String( F("\n") );
+      #else
+      content = content + String( F("\n") );
       #endif
       content = content + String( F(""
-    "},"
-    "\"cpu\":{"
-      "\"freq\":\"") ) + String( ESP.getCpuFreqMHz() ) + String( F("\""
-    "}"
+    "\t},\n"
+    "\t\"cpu\": {\n"
+      "\t\t\"freq\": ") ) + String( ESP.getCpuFreqMHz() ) + String( F(",\n"
+      "\t\t\"millis\": ") ) + String( millis() ) + String( F("\n"
+    "\t},\n"
+    "\t\"clock\": {\n"
+      "\t\t\"date\": ") ) + ( timeCanBeCalculated() ? ( String( F( "\"" ) ) + String( timeinfo->tm_year + 1900 ) + String( F( "/" ) ) + String( ( timeinfo->tm_mon < 9 ? String( F( "0" ) ) : String( F( "" ) ) ) + String( timeinfo->tm_mon + 1 ) ) + String( F( "/" ) ) + String( ( timeinfo->tm_mday < 10 ?  String( F( "0" ) ) : String( F( "" ) ) ) + String( timeinfo->tm_mday ) ) ) + String( F( "\"" ) ) : String( F( "null" ) ) ) + String( F(",\n"
+      "\t\t\"time\": ") ) + ( timeCanBeCalculated() ? ( String( F( "\"" ) ) + hourStr + String( F( ":" ) ) + minuteStr + String( F( ":" ) ) + secondStr + String( F( "\"" ) ) ) : String( F( "null" ) ) ) + String( F(",\n"
+      "\t\t\"ntp\": ") ) + ( timeCanBeCalculated() ? ( String( F( "" ) ) + ( timeClient.isTimeSet() ? String( timeClient.getLastUpdateMillis() ) : String( customDateTimeReceivedAt ) ) + String( F( "" ) ) ) : "null" ) + String( F("\n"
+    "\t}\n"
   "}" ) );
   wifiWebServer.send( 200, getContentType( F("json") ), content );
 }

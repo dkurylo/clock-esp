@@ -111,7 +111,7 @@ NTPClient::Status NTPClient::forceUpdate() {
           timeSpent = (timeSpent >> 1);
         }
 
-        this->_lastUpdate = millis() - timeSpent; // Account for network delays in reading the time
+        unsigned long lastUpdateToUse = millis() - timeSpent; // Account for network delays in reading the time
 
         this->_udp->read(this->_packetBuffer, NTP_PACKET_SIZE);
 
@@ -120,6 +120,16 @@ NTPClient::Status NTPClient::forceUpdate() {
         // combine the four bytes (two words) into a long integer
         // this is NTP time (seconds since Jan 1 1900):
         unsigned long secsSince1900 = highWord << 16 | lowWord;
+
+        if( secsSince1900 == 0 || secsSince1900 == ULONG_MAX ) { //sometimes it returns all F for some reason
+          #ifdef DEBUG_NTPClient
+            Serial.print( "NTP packet received with all FF" );
+          #endif
+
+          return NTPClient::STATUS_FAILED_RESPONSE;
+        }
+
+        this->_lastUpdate = lastUpdateToUse;
 
         this->_currentEpoc = secsSince1900 - SEVENZYYEARS;
 
@@ -251,4 +261,8 @@ void NTPClient::sendNTPPacket() {
 void NTPClient::setRandomPort(unsigned int minValue, unsigned int maxValue) {
   randomSeed(analogRead(0));
   this->_port = random(minValue, maxValue);
+}
+
+unsigned long NTPClient::getLastUpdateMillis() const {
+  return this->_lastUpdate;
 }

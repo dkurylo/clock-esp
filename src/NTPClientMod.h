@@ -121,4 +121,9 @@ class NTPClient {
      * Stops the underlying UDP client
      */
     void end();
+
+    /*
+    * gets the last millis when time was updated
+    */
+    unsigned long getLastUpdateMillis() const;
 };
