@@ -121,9 +121,9 @@ NTPClient::Status NTPClient::forceUpdate() {
         // this is NTP time (seconds since Jan 1 1900):
         unsigned long secsSince1900 = highWord << 16 | lowWord;
 
-        if( secsSince1900 == 0 || secsSince1900 == ULONG_MAX ) { //sometimes it returns all F for some reason
+        if( secsSince1900 == 0 || secsSince1900 == ULONG_MAX ) {
           #ifdef DEBUG_NTPClient
-            Serial.print( "NTP packet received with all FF" );
+            Serial.print( "NTP packet received was rejected" );
           #endif
 
           return NTPClient::STATUS_FAILED_RESPONSE;
