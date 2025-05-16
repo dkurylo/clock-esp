@@ -10,6 +10,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <HTTPUpdateServerMod.h>
+#include <mbedtls/base64.h>
 #endif
 
 #include <DNSServer.h> //for Captive Portal
@@ -2226,6 +2227,7 @@ void handleWebServerGetFontEditor() {
     "});"
     "const saveEspData=(()=>{"
       "let font=getFont();"
+#ifdef ESP8266
       "fetch('/font',{"
         "method:'POST',"
         "headers:{"
@@ -2233,6 +2235,20 @@ void handleWebServerGetFontEditor() {
           "'Content-Length':font.length.toString()"
         "},"
         "body:font"
+#else //ESP32 or ESP32S2
+      "let fontBin='';"
+      "for(let i=0;i<font.length;i++){"
+        "fontBin+=String.fromCharCode(font[i]);"
+      "}"
+      "let fontb64=btoa(fontBin);"
+      "fetch('/font',{"
+        "method:'POST',"
+        "headers:{"
+          "'Content-Type':'text/plain',"
+          "'Content-Length':fontb64.length.toString()"
+        "},"
+        "body:fontb64"
+#endif
       "}).then(res=>{"
         "if(!res.ok){alert('Failed to upload font');}"
       "}).catch(e=>{"
@@ -2332,9 +2348,33 @@ void handleWebServerGetFont() {
 }
 
 void handleWebServerPostFont() {
+  uint16_t expectedContentLength = getFontContentLength();
+  #ifdef ESP8266
   String body = wifiWebServer.arg("plain");
+  #else //ESP32 or ESP32S2
+  String body = wifiWebServer.arg("plain"); //base64 encoded binary
+  size_t actualDecodedResultLength = 0;
+  uint8_t decoded[expectedContentLength];
+  int convertResult = mbedtls_base64_decode( decoded, sizeof(decoded), &actualDecodedResultLength, (const unsigned char*)body.c_str(), body.length() );
+  if( convertResult != 0 ) {
+    if( convertResult == MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL ) {
+      wifiWebServer.send( 500, getContentType("txt"), String( F("Base64 buffer too small (") ) + String(expectedContentLength) + String( F("). Need at least") ) + String(actualDecodedResultLength) + String( F(" bytes") ) );
+    } else if( convertResult == MBEDTLS_ERR_BASE64_INVALID_CHARACTER ) {
+      wifiWebServer.send( 400, getContentType("txt"), String( F("Base64 data contains invalid character") ) );
+    } else {
+      wifiWebServer.send( 400, getContentType("txt"), String( F("Base64 decode error: ") ) + String( convertResult ) );
+    }
+    return;
+  }
 
-  if( body.length() != getFontContentLength() ) {
+  if( actualDecodedResultLength != expectedContentLength ) {
+    wifiWebServer.send( 400, getContentType("txt"), String( F("Data size is incorrect") ) );
+    return;
+  }
+  body = String( (const char*)decoded, actualDecodedResultLength ); //actual base64 decoded binary
+  #endif
+
+  if( body.length() != expectedContentLength ) {
     wifiWebServer.send( 400, getContentType("txt"), String( F("Data size is incorrect") ) );
     return;
   }
