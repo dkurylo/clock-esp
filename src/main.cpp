@@ -9,7 +9,7 @@
 #else //ESP32 or ESP32S2
 #include <WiFi.h>
 #include <WebServer.h>
-#include <HTTPUpdateServerMod.h>
+#include <HTTPUpdateServerMod_LittleFs.h>
 #include <mbedtls/base64.h>
 #endif
 
@@ -48,14 +48,17 @@
 //ESP32 has 12-bit ADC (0-4095)
 //ESP32-S2 has 13-bit ADC (0-8191)
 #ifdef ESP8266
-#define ADC_RESOLUTION 10
-#else //ESP32 or ESP32S2
-#define ADC_RESOLUTION 13
+  #define ADC_RESOLUTION 10
+#elif defined(ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32S3)
+  #define ADC_RESOLUTION 13
+#else
+  #define ADC_RESOLUTION 12 // Default for ESP32, ESP32-C3, C2, C6, H2
 #endif
 #define ADC_NUMBER_OF_VALUES ( 1 << ADC_RESOLUTION )
 #define ADC_STEP_FOR_BYTE ( ADC_NUMBER_OF_VALUES / ( 1 << ( 8 * sizeof( uint8_t ) ) ) )
 
-bool isNewBoard = false;
+uint8_t EEPROM_FLASH_DATA_VERSION = 2; //change to next number when eeprom data format is changed. 255 is a reserved value: is set to 255 when: hard reset pin is at 3.3V (high); during factory reset procedure; when FW is loaded to a new device (EEPROM reads FF => 255)
+uint8_t eepromFlashDataVersion = EEPROM_FLASH_DATA_VERSION;
 const char* getFirmwareVersion() { const char* result = "1.00"; return result; }
 
 //wifi access point configuration
@@ -65,9 +68,10 @@ const IPAddress getWiFiAccessPointIp() { IPAddress result( 192, 168, 1, 1 ); ret
 const IPAddress getWiFiAccessPointNetMask() { IPAddress result( 255, 255, 255, 0 ); return result; };
 const uint32_t TIMEOUT_AP = 120000;
 
+//device name
+char deviceName[16 + 1];
+
 //wifi client configuration
-const uint8_t WIFI_SSID_MAX_LENGTH = 32;
-const uint8_t WIFI_PASSWORD_MAX_LENGTH = 32;
 const char* getWiFiHostName() { const char* result = "Clock"; return result; }
 const uint32_t TIMEOUT_CONNECT_WIFI_SYNC = 90000;
 const uint32_t DELAY_WIFI_CONNECTION_CHECK = 60000;
@@ -90,8 +94,8 @@ bool isSlowSemicolonAnimation = false; //semicolon period, false = 60 blinks per
 const uint16_t DELAY_DISPLAY_ANIMATION = 20; //led animation speed, in ms
 
 //variables used in the code, don't change anything here
-char wiFiClientSsid[WIFI_SSID_MAX_LENGTH];
-char wiFiClientPassword[WIFI_PASSWORD_MAX_LENGTH];
+char wiFiClientSsid[32 + 1];
+char wiFiClientPassword[32 + 1];
 
 uint8_t displayFontTypeNumber = 1;
 bool isDisplayBoldFontUsed = true;
@@ -237,10 +241,11 @@ File getFileFromFlash( String fileName ) {
 
 
 //eeprom functionality
-const uint16_t eepromIsNewBoardIndex = 0;
-const uint16_t eepromWiFiSsidIndex = eepromIsNewBoardIndex + 1;
-const uint16_t eepromWiFiPasswordIndex = eepromWiFiSsidIndex + WIFI_SSID_MAX_LENGTH;
-const uint16_t eepromDisplayFontTypeNumberIndex = eepromWiFiPasswordIndex + WIFI_PASSWORD_MAX_LENGTH;
+const uint16_t eepromFlashDataVersionIndex = 0;
+const uint16_t eepromWiFiSsidIndex = eepromFlashDataVersionIndex + 1;
+const uint16_t eepromWiFiPasswordIndex = eepromWiFiSsidIndex + sizeof(wiFiClientSsid);
+const uint16_t eepromDeviceNameIndex = eepromWiFiPasswordIndex + sizeof(wiFiClientPassword);
+const uint16_t eepromDisplayFontTypeNumberIndex = eepromDeviceNameIndex + sizeof(deviceName);
 const uint16_t eepromIsFontBoldUsedIndex = eepromDisplayFontTypeNumberIndex + 1;
 const uint16_t eepromIsDisplaySecondsShownIndex = eepromIsFontBoldUsedIndex + 1;
 const uint16_t eepromDisplayDayBrightnessIndex = eepromIsDisplaySecondsShownIndex + 1;
@@ -287,7 +292,7 @@ bool writeEepromCharArray( const uint16_t& eepromIndex, char* newValue, uint8_t 
   return true;
 }
 
-uint8_t readEepromIntValue( const uint16_t& eepromIndex, uint8_t& variableWithValue, bool doApplyValue ) {
+uint8_t readEepromUintValue( const uint16_t& eepromIndex, uint8_t& variableWithValue, bool doApplyValue ) {
   uint8_t eepromValue = EEPROM.read( eepromIndex );
   if( doApplyValue ) {
     variableWithValue = eepromValue;
@@ -295,9 +300,9 @@ uint8_t readEepromIntValue( const uint16_t& eepromIndex, uint8_t& variableWithVa
   return eepromValue;
 }
 
-bool writeEepromIntValue( const uint16_t& eepromIndex, uint8_t newValue ) {
+bool writeEepromUintValue( const uint16_t& eepromIndex, uint8_t newValue ) {
   bool eepromWritten = false;
-  if( readEepromIntValue( eepromIndex, newValue, false ) != newValue ) {
+  if( readEepromUintValue( eepromIndex, newValue, false ) != newValue ) {
     EEPROM.write( eepromIndex, newValue );
     eepromWritten = true;
   }
@@ -361,57 +366,63 @@ bool writeEepromFontData( bool doErase ) {
 }
 
 void loadEepromData() {
-  readEepromBoolValue( eepromIsNewBoardIndex, isNewBoard, true );
-  if( !isNewBoard ) {
+  if( eepromFlashDataVersion != 255 ) {
+    readEepromUintValue( eepromFlashDataVersionIndex, eepromFlashDataVersion, true );
+  }
 
-    readEepromCharArray( eepromWiFiSsidIndex, wiFiClientSsid, WIFI_SSID_MAX_LENGTH, true );
-    readEepromCharArray( eepromWiFiPasswordIndex, wiFiClientPassword, WIFI_PASSWORD_MAX_LENGTH, true );
-    readEepromIntValue( eepromDisplayFontTypeNumberIndex, displayFontTypeNumber, true );
+  if( eepromFlashDataVersion != 255 && eepromFlashDataVersion == EEPROM_FLASH_DATA_VERSION ) {
+
+    readEepromCharArray( eepromWiFiSsidIndex, wiFiClientSsid, sizeof(wiFiClientSsid), true );
+    readEepromCharArray( eepromWiFiPasswordIndex, wiFiClientPassword, sizeof(wiFiClientPassword), true );
+    readEepromCharArray( eepromDeviceNameIndex, deviceName, sizeof(deviceName), true );
+    readEepromUintValue( eepromDisplayFontTypeNumberIndex, displayFontTypeNumber, true );
     if( displayFontTypeNumber < 1 || displayFontTypeNumber > TCFonts::NUMBER_OF_FONTS_SUPPORTED ) displayFontTypeNumber = 1;
     readEepromBoolValue( eepromIsFontBoldUsedIndex, isDisplayBoldFontUsed, true );
     readEepromBoolValue( eepromIsDisplaySecondsShownIndex, isDisplaySecondsShown, true );
-    readEepromIntValue( eepromDisplayDayBrightnessIndex, displayDayBrightness, true );
+    readEepromUintValue( eepromDisplayDayBrightnessIndex, displayDayBrightness, true );
     if( displayDayBrightness > 15 ) displayDayBrightness = 15;
-    readEepromIntValue( eepromDisplayNightBrightnessIndex, displayNightBrightness, true );
+    readEepromUintValue( eepromDisplayNightBrightnessIndex, displayNightBrightness, true );
     if( displayNightBrightness > 15 ) displayNightBrightness = 15;
     if( displayNightBrightness > displayDayBrightness ) displayNightBrightness = displayDayBrightness;
     uint8_t eepromSensorBrightnessDayLevel = 0;
-    readEepromIntValue( eepromSensorBrightnessDayLevelIndex, eepromSensorBrightnessDayLevel, true );
+    readEepromUintValue( eepromSensorBrightnessDayLevelIndex, eepromSensorBrightnessDayLevel, true );
     sensorBrightnessDayLevel = ( (uint16_t)eepromSensorBrightnessDayLevel ) * ADC_STEP_FOR_BYTE;
     uint8_t eepromSensorBrightnessNightLevel = 0;
-    readEepromIntValue( eepromSensorBrightnessNightLevelIndex, eepromSensorBrightnessNightLevel, true );
+    readEepromUintValue( eepromSensorBrightnessNightLevelIndex, eepromSensorBrightnessNightLevel, true );
     sensorBrightnessNightLevel = ( (uint16_t)eepromSensorBrightnessNightLevel ) * ADC_STEP_FOR_BYTE;
     if( sensorBrightnessNightLevel > sensorBrightnessDayLevel ) sensorBrightnessNightLevel = sensorBrightnessDayLevel;
     readEepromBoolValue( eepromIsSingleDigitHourShownIndex, isSingleDigitHourShown, true );
     readEepromBoolValue( eepromIsRotateDisplayIndex, isRotateDisplay, true );
     readEepromBoolValue( eepromIsSlowSemicolonAnimationIndex, isSlowSemicolonAnimation, true );
     readEepromBoolValue( eepromIsClockAnimatedIndex, isClockAnimated, true );
-    readEepromIntValue( eepromAnimationTypeNumberIndex, animationTypeNumber, true );
+    readEepromUintValue( eepromAnimationTypeNumberIndex, animationTypeNumber, true );
     if( animationTypeNumber < 1 || animationTypeNumber > TCData::NUMBER_OF_ANIMATIONS_SUPPORTED ) animationTypeNumber = 1;
     readEepromBoolValue( eepromIsCompactLayoutShownIndex, isDisplayCompactLayoutUsed, true );
     readEepromFontData();
 
   } else { //fill EEPROM with default values when starting the new board
-    writeEepromBoolValue( eepromIsNewBoardIndex, false );
+    writeEepromUintValue( eepromFlashDataVersionIndex, EEPROM_FLASH_DATA_VERSION );
+    eepromFlashDataVersion = EEPROM_FLASH_DATA_VERSION;
 
-    writeEepromCharArray( eepromWiFiSsidIndex, wiFiClientSsid, WIFI_SSID_MAX_LENGTH );
-    writeEepromCharArray( eepromWiFiPasswordIndex, wiFiClientPassword, WIFI_PASSWORD_MAX_LENGTH );
-    writeEepromIntValue( eepromDisplayFontTypeNumberIndex, displayFontTypeNumber );
+    writeEepromCharArray( eepromWiFiSsidIndex, wiFiClientSsid, sizeof(wiFiClientSsid) );
+    writeEepromCharArray( eepromWiFiPasswordIndex, wiFiClientPassword, sizeof(wiFiClientPassword) );
+    writeEepromCharArray( eepromDeviceNameIndex, deviceName, sizeof(deviceName) );
+    writeEepromUintValue( eepromDisplayFontTypeNumberIndex, displayFontTypeNumber );
     writeEepromBoolValue( eepromIsFontBoldUsedIndex, isDisplayBoldFontUsed );
     writeEepromBoolValue( eepromIsDisplaySecondsShownIndex, isDisplaySecondsShown );
-    writeEepromIntValue( eepromDisplayDayBrightnessIndex, displayDayBrightness );
-    writeEepromIntValue( eepromDisplayNightBrightnessIndex, displayNightBrightness );
-    writeEepromIntValue( eepromSensorBrightnessDayLevelIndex, (uint8_t)( sensorBrightnessDayLevel / ADC_STEP_FOR_BYTE ) );
-    writeEepromIntValue( eepromSensorBrightnessNightLevelIndex, (uint8_t)( sensorBrightnessNightLevel / ADC_STEP_FOR_BYTE ) );
+    writeEepromUintValue( eepromDisplayDayBrightnessIndex, displayDayBrightness );
+    writeEepromUintValue( eepromDisplayNightBrightnessIndex, displayNightBrightness );
+    writeEepromUintValue( eepromSensorBrightnessDayLevelIndex, (uint8_t)( sensorBrightnessDayLevel / ADC_STEP_FOR_BYTE ) );
+    writeEepromUintValue( eepromSensorBrightnessNightLevelIndex, (uint8_t)( sensorBrightnessNightLevel / ADC_STEP_FOR_BYTE ) );
     writeEepromBoolValue( eepromIsSingleDigitHourShownIndex, isSingleDigitHourShown );
     writeEepromBoolValue( eepromIsRotateDisplayIndex, isRotateDisplay );
     writeEepromBoolValue( eepromIsSlowSemicolonAnimationIndex, isSlowSemicolonAnimation );
     writeEepromBoolValue( eepromIsClockAnimatedIndex, isClockAnimated );
-    writeEepromIntValue( eepromAnimationTypeNumberIndex, animationTypeNumber );
+    writeEepromUintValue( eepromAnimationTypeNumberIndex, animationTypeNumber );
     writeEepromBoolValue( eepromIsCompactLayoutShownIndex, isDisplayCompactLayoutUsed );
     writeEepromFontData( true );
 
-    isNewBoard = false;
+    loadEepromData();
   }
 }
 
@@ -1191,18 +1202,25 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
     "<meta charset=\"UTF-8\">"
     "<title>Годинник</title>"
     "<style>"
-      ":root{--f:22px;}"
-      "body{margin:0;background-color:#444;font-family:sans-serif;color:#FFF;}"
+      ":root{--f:20px;}"
+      "body{margin:0;background-color:#333;font-family:sans-serif;color:#FFF;}"
       "body,input,button,select{font-size:var(--f);}"
       ".wrp{width:60%;min-width:460px;max-width:600px;margin:auto;margin-bottom:10px;}"
-      "h2{color:#FFF;font-size:calc(var(--f)*1.2);text-align:center;margin-top:0.3em;margin-bottom:0.1em;}"
+      "h2{text-align:center;margin-top:0.3em;margin-bottom:1em;}"
+      "h2,.fxh{color:#FFF;font-size:calc(var(--f)*1.2);}"
       ".fx{display:flex;flex-wrap:wrap;margin:auto;}"
-      ".fx:not(:first-of-type){margin-top:0.3em;}"
+      ".fx.fxsect{border:1px solid #555;background-color:#444;margin-top:10px;border-radius:8px;box-shadow: 4px 4px 5px #222;overflow:hidden;}"
+      ".fxsect+.fxsect{/*border-top:none;*/}"
+      ".fxh,.fxc{width:100%;}"
+      ".fxh{padding:0.2em 0.5em;font-weight:bold;background-color:#606060;background:linear-gradient(#666,#555);border-bottom:0px solid #555;}"
+      ".fxc{padding:0.5em 0.5em;}"
       ".fx .fi{display:flex;align-items:center;margin-top:0.3em;width:100%;}"
       ".fx .fi:first-of-type,.fx.fv .fi{margin-top:0;}"
       ".fv{flex-direction:column;align-items:flex-start;}"
-      ".ex.ext:before{color:#888;cursor:pointer;content:\"▶\";}"
-      ".ex.exon .ex.ext:before{content:\"▼\";}"
+      ".ex.ext.exton{color:#AAA;cursor:pointer;}"
+      ".ex.ext.extoff{color:#666;cursor:default;}"
+      ".ex.ext:after{display:inline-block;content:\"▶\";}"
+      ".ex.exon .ex.ext:after{transform:rotate(90deg);}"
       ".ex.exc{height:0;margin-top:0;}.ex.exc>*{visibility:hidden;}"
       ".ex.exc.exon{height:inherit;}.ex.exc.exon>*{visibility:initial;}"
       "label{flex:none;padding-right:0.6em;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
@@ -1218,8 +1236,7 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
       "output{padding-left:0.6em;}"
       "button:not(.fixed){width:100%;padding:0.2em;}"
       "a{color:#AAA;}"
-      ".sub{text-wrap:nowrap;}"
-      ".sub:not(:last-of-type){padding-right:0.6em;}"
+      ".sub+.sub{padding-left:0.6em;}"
       ".ft{margin-top:1em;}"
       ".pl{padding-left:0.6em;}"
       ".pll{padding-left:calc(var(--f)*1.2 + 0.6em);}"
@@ -1227,12 +1244,14 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
       ".i{color:#CCC;margin-left:0.2em;border:1px solid #777;border-radius:50%;background-color:#666;cursor:default;font-size:65%;vertical-align:top;width:1em;height:1em;display:inline-block;text-align:center;}"
       ".i:before{content:\"i\";position:relative;top:-0.07em;}"
       ".i:hover{background-color:#777;color:#DDD;}"
-      ".stat{opacity:0.3;font-size:65%;border:1px solid #DDD;border-radius:4px;overflow:hidden;}"
+      ".stat{font-size:65%;color:#888;border:1px solid #777;border-radius:6px;overflow:hidden;}"
       ".stat>span{padding:1px 4px;display:inline-block;}"
-      ".stat>span:not(:last-of-type){border-right:1px solid #DDD;}"
-      ".stat>span.lbl,.stat>span.btn{background-color:#666;}"
+      ".stat>span:not(:last-of-type){border-right:1px solid #777;}"
+      ".stat>span.lbl,.stat>span.btn{color:#888;background-color:#444;}"
       ".stat>span.btn{cursor:default;}"
-      ".stat>span.btn.on{background-color:#05C;}"
+      ".stat>span.btn:hover{background-color:#505050;}"
+      ".stat>span.btn.on{color:#48B;background-color:#246;}"
+      ".stat>span.btn.on:hover{background-color:#1A3A5A;}"
       "#exw{width:100%;display:flex;background-image:linear-gradient(-180deg,#777,#222 7% 93%,#000);}"
       "#exdw{width:calc(88% - 6px);border:2px solid #1A1A1A;padding:1px;margin:3% 6%;}"
       "#exdw .exdl{display:flex;flex-wrap:nowrap;}"
@@ -1247,12 +1266,15 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
         ":root{--f:4vw;}"
         ".wrp{width:94%;max-width:100%;}"
       "}"
+      "@media(orientation:landscape){"
+        ":root{--f:22px;}"
+      "}"
     "</style>"
   "</head>"
   "<body>"
     "<div class=\"wrp\">"
       "<h2>"
-        "ГОДИННИК"
+        "<span id=\"title\">ГОДИННИК</span>"
         "<div style=\"line-height:0.5;\">"
           "<div class=\"lnk\" style=\"font-size:50%;\">Розробник: <a href=\"mailto:kurylo.press@gmail.com?subject=Clock\" target=\"_blank\">Дмитро Курило</a></div> "
           "<div class=\"lnk\" style=\"font-size:50%;\"><a href=\"https://github.com/dkurylo/clock-esp\" target=\"_blank\">GitHub</a></div>"
@@ -1309,9 +1331,6 @@ String getHtmlInput( String label, const char* type, const char* value, const ch
       ( (strcmp(type, HTML_INPUT_TEXT) != 0 && strcmp(type, HTML_INPUT_PASSWORD) != 0 && strcmp(type, HTML_INPUT_COLOR) != 0 && strcmp(type, HTML_INPUT_RANGE) != 0) ? getHtmlLabel( label, elId, false ) : "" );
 }
 
-const uint8_t getWiFiClientSsidNameMaxLength() { return WIFI_SSID_MAX_LENGTH - 1;}
-const uint8_t getWiFiClientSsidPasswordMaxLength() { return WIFI_PASSWORD_MAX_LENGTH - 1;}
-
 const char* HTML_PAGE_WIFI_SSID_NAME = "ssid";
 const char* HTML_PAGE_WIFI_PWD_NAME = "pwd";
 
@@ -1328,72 +1347,39 @@ const char* HTML_PAGE_BRIGHTNESS_DAY_NAME = "brtd";
 const char* HTML_PAGE_BRIGHTNESS_NIGHT_NAME = "brtn";
 const char* HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME = "brsd";
 const char* HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME = "brsn";
+const char* HTML_PAGE_DEVICE_NAME_NAME = "dvn";
 
 void handleWebServerGet() {
+  wifiWebServer.setContentLength( CONTENT_LENGTH_UNKNOWN );
+  wifiWebServer.send( 200, getContentType( F("html") ), "" );
+
   String content;
-  content.reserve( 10500 ); //currently it's around 8500
+  content.reserve( 6000 ); //currently 5000 max (when sending Html Page Start)
+
+  //5000
   addHtmlPageStart( content );
-  content += String( F("<script>"
-    "function ex(el){"
-      "Array.from(el.parentElement.parentElement.children).forEach(ch=>{"
-        "if(ch.classList.contains(\"ex\"))ch.classList.toggle(\"exon\");"
-      "});"
-    "}"
-  "</script>"
-  "<form method=\"POST\">"
-  "<div class=\"fx\">"
-    "<h2>Приєднатись до WiFi:</h2>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("SSID назва"), HTML_INPUT_TEXT, wiFiClientSsid, HTML_PAGE_WIFI_SSID_NAME, HTML_PAGE_WIFI_SSID_NAME, 0, getWiFiClientSsidNameMaxLength(), 0, true, false, "", "" ) + String( F("</div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("SSID пароль"), HTML_INPUT_PASSWORD, wiFiClientPassword, HTML_PAGE_WIFI_PWD_NAME, HTML_PAGE_WIFI_PWD_NAME, 0, getWiFiClientSsidPasswordMaxLength(), 0, true, false, "", "" ) + String( F("</div>"
-  "</div>"
-  "<div class=\"fx\">"
-    "<h2>Налаштування дисплея:</h2>"
-    "<div class=\"fi pl\"><div id=\"exw\"><div id=\"exdw\"></div></div></div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("Вид шрифта"), HTML_INPUT_RANGE, String(displayFontTypeNumber).c_str(), HTML_PAGE_FONT_TYPE_NAME, HTML_PAGE_FONT_TYPE_NAME, 1, TCFonts::NUMBER_OF_FONTS_SUPPORTED, 0, false, displayFontTypeNumber, "onchange=\"pv();\"", "" ) + String( F("<span class=\"pl\"><a href=\"/fontedit\">Редактор</a></span></div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("Жирний шрифт"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_BOLD_FONT_NAME, HTML_PAGE_BOLD_FONT_NAME, 0, 0, 0, false, isDisplayBoldFontUsed, "onchange=\"pv();\"", "" ) + String( F("</div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("Показувати секунди"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_SHOW_SECS_NAME, HTML_PAGE_SHOW_SECS_NAME, 0, 0, 0, false, isDisplaySecondsShown, "onchange=\"pv();\"", "" ) + String( F("</div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("Показувати час без переднього нуля"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_SHOW_SINGLE_DIGIT_HOUR_NAME, HTML_PAGE_SHOW_SINGLE_DIGIT_HOUR_NAME, 0, 0, 0, false, isSingleDigitHourShown, "onchange=\"pv();\"", "" ) + String( F("</div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("Зменшити відстань до двокрапок"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_COMPACT_LAYOUT_NAME, HTML_PAGE_COMPACT_LAYOUT_NAME, 0, 0, 0, false, isDisplayCompactLayoutUsed, "onchange=\"pv();\"", "" ) + String( F("</div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("Повільні двокрапки (30 разів в хв)"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_SLOW_SEMICOLON_ANIMATION_NAME, HTML_PAGE_SLOW_SEMICOLON_ANIMATION_NAME, 0, 0, 0, false, isSlowSemicolonAnimation, "", "" ) + String( F("</div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("Розвернути зображення на 180°"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_ROTATE_DISPLAY_NAME, HTML_PAGE_ROTATE_DISPLAY_NAME, 0, 0, 0, false, isRotateDisplay, "", "" ) + String( F("</div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("Анімований годинник"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_CLOCK_ANIMATED_NAME, HTML_PAGE_CLOCK_ANIMATED_NAME, 0, 0, 0, false, isClockAnimated, "", "" ) + String( F("</div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("Вид анімації"), HTML_INPUT_RANGE, String(animationTypeNumber).c_str(), HTML_PAGE_ANIMATION_TYPE_NAME, HTML_PAGE_ANIMATION_TYPE_NAME, 1, TCData::NUMBER_OF_ANIMATIONS_SUPPORTED, 0, false, animationTypeNumber, "", String( F( "oninput=\"this.nextElementSibling.src='/data?p='+this.value;\"><img class=\"ap\" src=\"/data?p=" ) ) + String( animationTypeNumber ) + String( F( "\"" ) ) ) + String( F("</div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("Яскравість вдень"), HTML_INPUT_RANGE, String(displayDayBrightness).c_str(), HTML_PAGE_BRIGHTNESS_DAY_NAME, HTML_PAGE_BRIGHTNESS_DAY_NAME, 0, 15, 0, false, displayDayBrightness, "", "" ) + String( F("</div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("Яскравість вночі"), HTML_INPUT_RANGE, String(displayNightBrightness).c_str(), HTML_PAGE_BRIGHTNESS_NIGHT_NAME, HTML_PAGE_BRIGHTNESS_NIGHT_NAME, 0, 15, 0, false, displayNightBrightness, "", "" ) + String( F("</div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("Сенсор яскравості (день)"), HTML_INPUT_RANGE, String(sensorBrightnessDayLevel).c_str(), HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME, HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME, 0, ADC_NUMBER_OF_VALUES - 1, ADC_STEP_FOR_BYTE, false, sensorBrightnessDayLevel, "", "" ) + String( F("</div>"
-    "<div class=\"fi pl\">") ) + getHtmlInput( F("Сенсор яскравості (ніч)"), HTML_INPUT_RANGE, String(sensorBrightnessNightLevel).c_str(), HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME, HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME, 0, ADC_NUMBER_OF_VALUES - 1, ADC_STEP_FOR_BYTE, false, sensorBrightnessNightLevel, "", "" ) + String( F("</div>"
-  "</div>"
-  "<div class=\"fx ft\">"
-    "<div class=\"fi\"><button type=\"submit\">Застосувати</button></div>"
-  "</div>"
-"</form>"
-"<div class=\"ft\">"
-  "<div class=\"fx\">"
-    "<span>"
-      "<span class=\"sub\"><a href=\"/testdim\">Перевірити нічний режим</a><span class=\"i\" title=\"Застосуйте налаштування перед перевіркою!\"></span></span>"
-      "<span class=\"sub\"><a href=\"/testled\">Перевірити матрицю</a></span>"
-    "</span>"
-  "</div>"
-  "<div class=\"fx\">"
-    "<span>"
-      "<span class=\"sub\"><a href=\"/update\">Оновити</a><span class=\"i\" title=\"Оновити прошивку. Поточна версія: ") ) + String( getFirmwareVersion() ) + String( F("\"></span></span>"
-      "<span class=\"sub\"><a href=\"/reset\">Відновити</a><span class=\"i\" title=\"Відновити до заводських налаштувань\"></span></span>"
-      "<span class=\"sub\"><a href=\"/reboot\">Перезавантажити</a></span>"
-    "</span>"
-  "</div>"
-  "<div class=\"fx\" style=\"padding-top:0.3em;\">"
-    "<span>"
-      "<div class=\"stat\">"
-        "<span class=\"btn\" onclick=\"this.classList.toggle('on');mnt();\">Яскравість</span>"
-        "<span>CUR <span id=\"b_cur\"></span></span>"
-        "<span>AVG <span id=\"b_avg\"></span></span>"
-        "<span>REQ <span id=\"b_req\"></span></span>"
-        "<span>DSP <span id=\"b_dsp\"></span></span>"
-      "</div>"
-    "</span>"
-  "</div>"
-"</div>"
+  wifiWebServer.sendContent( content );
+  content = "";
+
+  //3100
+  content += String( F(""
 "<script>"
+  "let devnm=\"" ) ) + String( deviceName ) + String( F("\";"
+  "let ap=" ) ) + String( isApInitialized ) + String( F(";"
+  "document.addEventListener(\"DOMContentLoaded\",()=>{"
+    "if(ap){"
+      "setInterval(()=>{"
+        "fetch(\"/ping\").catch(e=>{});"
+      "},30000);"
+    "}"
+    "if(devnm!=''){"
+      "document.title+=' - '+devnm;"
+      "document.getElementById('title').textContent+=' - '+devnm;"
+    "}"
+    "dt();"
+    "pv();"
+    "mnf(true);"
+  "});"
   "function dt(){"
     "let ts=") ) + String( timeClient.isTimeSet() || ( isCustomDateTimeSet && calculateDiffMillis( customDateTimeReceivedAt, millis() ) <= DELAY_NTP_TIME_SYNC ) ) + String( F(";"
     "if(ts)return;"
@@ -1416,42 +1402,158 @@ void handleWebServerGet() {
     "}).catch(e=>{"
     "});"
   "}"
-  "function pg(){"
-    "let ap=") ) + String( isApInitialized ) + String( F(";"
-    "if(!ap)return;"
-    "setInterval(()=>{"
-      "fetch('/ping').catch(e=>{"
-      "});"
-    "},30000);"
+  "function ex(el){"
+    "Array.from(el.parentElement.parentElement.children).forEach(ch=>{"
+      "if(ch.classList.contains(\"ex\"))ch.classList.toggle(\"exon\");"
+    "});"
   "}"
   "let isMnt=false;"
   "function mnt(){"
     "isMnt=!isMnt;"
     "mnf();"
   "}"
+  "let monAbortCont=null;"
   "function mnf(isOnce){"
+    "if(monAbortCont){"
+      "monAbortCont.abort();"
+    "}"
     "if(!isOnce&&!isMnt)return;"
-    "fetch(\"/monitor\").then(resp=>resp.json()).then(data=>{"
+    "monAbortCont=new AbortController();"
+    "const signal=monAbortCont.signal;"
+    "const timeoutId=setTimeout(()=>{"
+      "monAbortCont.abort();"
+    "},4000);"
+    "fetch(\"/monitor\",{signal})"
+    ".then(resp=>resp.json())"
+    ".then(data=>{"
+      "clearTimeout(timeoutId);"
       "for(const[key,value]of Object.entries(data.brt)){"
         "document.getElementById(\"b_\"+key).innerText=value;"
       "}"
-    "}).catch(e=>{"
+    "})"
+    ".catch(e=>{"
+      "clearTimeout(timeoutId);"
+      "if(e.name==='AbortError'){"
+      "}else{"
+      "}"
+    "})"
+    ".finally(()=>{"
+      "monAbortCont=null;"
     "});"
+    "if(isOnce)return;"
     "setTimeout(()=>{"
       "mnf();"
     "},5000);"
   "}"
-  "document.addEventListener(\"DOMContentLoaded\",()=>{"
-    "dt();"
-    "pv();"
-    "pg();"
-    "mnf(true);"
-  "});"
-"</script>") );
-  addHtmlPageEnd( content );
+"</script>"
+"<form method=\"POST\">"
+  "<div class=\"fx fxsect\">"
+    "<div class=\"fxh\">"
+      "Приєднатись до WiFi"
+    "</div>"
+    "<div class=\"fxc\">"
+      "<div class=\"fi\">") ) + getHtmlInput( F("SSID назва"), HTML_INPUT_TEXT, wiFiClientSsid, HTML_PAGE_WIFI_SSID_NAME, HTML_PAGE_WIFI_SSID_NAME, 0, sizeof(wiFiClientSsid) - 1, 0, true, false, "", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("SSID пароль"), HTML_INPUT_PASSWORD, wiFiClientPassword, HTML_PAGE_WIFI_PWD_NAME, HTML_PAGE_WIFI_PWD_NAME, 0, sizeof(wiFiClientPassword) - 1, 0, true, false, "", "" ) + String( F("</div>"
+    "</div>"
+  "</div>"
+  "<div class=\"fx fxsect\">"
+    "<div class=\"fxh\">"
+      "Попередній перегляд"
+    "</div>"
+    "<div class=\"fxc\">"
+      "<div class=\"fi\"><div id=\"exw\"><div id=\"exdw\"></div></div></div>"
+    "</div>"
+  "</div>"
+  "<div class=\"fx fxsect\">"
+    "<div class=\"fxh\">"
+      "Вигляд"
+    "</div>"
+    "<div class=\"fxc\">"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Показувати секунди"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_SHOW_SECS_NAME, HTML_PAGE_SHOW_SECS_NAME, 0, 0, 0, false, isDisplaySecondsShown, "onchange=\"pv();\"", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Показувати час без переднього нуля"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_SHOW_SINGLE_DIGIT_HOUR_NAME, HTML_PAGE_SHOW_SINGLE_DIGIT_HOUR_NAME, 0, 0, 0, false, isSingleDigitHourShown, "onchange=\"pv();\"", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Зменшити відстань до двокрапок"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_COMPACT_LAYOUT_NAME, HTML_PAGE_COMPACT_LAYOUT_NAME, 0, 0, 0, false, isDisplayCompactLayoutUsed, "onchange=\"pv();\"", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Повільні двокрапки (30 разів в хв)"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_SLOW_SEMICOLON_ANIMATION_NAME, HTML_PAGE_SLOW_SEMICOLON_ANIMATION_NAME, 0, 0, 0, false, isSlowSemicolonAnimation, "", "" ) + String( F("</div>"
+    "</div>"
+  "</div>"
+  "<div class=\"fx fxsect\">"
+    "<div class=\"fxh\">"
+      "Шрифт"
+    "</div>"
+    "<div class=\"fxc\">"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Вид шрифта"), HTML_INPUT_RANGE, String(displayFontTypeNumber).c_str(), HTML_PAGE_FONT_TYPE_NAME, HTML_PAGE_FONT_TYPE_NAME, 1, TCFonts::NUMBER_OF_FONTS_SUPPORTED, 0, false, displayFontTypeNumber, "onchange=\"pv();\"", "" ) + String( F("<span class=\"pl\"><a href=\"/fontedit\">Редактор</a></span></div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Жирний шрифт"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_BOLD_FONT_NAME, HTML_PAGE_BOLD_FONT_NAME, 0, 0, 0, false, isDisplayBoldFontUsed, "onchange=\"pv();\"", "" ) + String( F("</div>"
+    "</div>"
+  "</div>" ) );
+  wifiWebServer.sendContent( content );
+  content = "";
 
-  wifiWebServer.sendHeader( String( F("Content-Length") ).c_str(), String( content.length() ) );
-  wifiWebServer.send( 200, getContentType( F("html") ), content );
+  //2700
+  content += String( F(""
+  "<div class=\"fx fxsect\">"
+    "<div class=\"fxh\">"
+      "Анімація"
+    "</div>"
+    "<div class=\"fxc\">"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Анімований годинник"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_CLOCK_ANIMATED_NAME, HTML_PAGE_CLOCK_ANIMATED_NAME, 0, 0, 0, false, isClockAnimated, "", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Вид анімації"), HTML_INPUT_RANGE, String(animationTypeNumber).c_str(), HTML_PAGE_ANIMATION_TYPE_NAME, HTML_PAGE_ANIMATION_TYPE_NAME, 1, TCData::NUMBER_OF_ANIMATIONS_SUPPORTED, 0, false, animationTypeNumber, "", String( F( "oninput=\"this.nextElementSibling.src='/data?p='+this.value;\"><img class=\"ap\" src=\"/data?p=" ) ) + String( animationTypeNumber ) + String( F( "\"" ) ) ) + String( F("</div>"
+    "</div>"
+  "</div>"
+  "<div class=\"fx fxsect\">"
+    "<div class=\"fxh\">"
+      "Яскравість"
+    "</div>"
+    "<div class=\"fxc\">"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Яскравість вдень"), HTML_INPUT_RANGE, String(displayDayBrightness).c_str(), HTML_PAGE_BRIGHTNESS_DAY_NAME, HTML_PAGE_BRIGHTNESS_DAY_NAME, 0, 15, 0, false, displayDayBrightness, "", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Яскравість вночі"), HTML_INPUT_RANGE, String(displayNightBrightness).c_str(), HTML_PAGE_BRIGHTNESS_NIGHT_NAME, HTML_PAGE_BRIGHTNESS_NIGHT_NAME, 0, 15, 0, false, displayNightBrightness, "", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Сенсор яскравості (день)"), HTML_INPUT_RANGE, String(sensorBrightnessDayLevel).c_str(), HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME, HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME, 0, ADC_NUMBER_OF_VALUES - 1, ADC_STEP_FOR_BYTE, false, sensorBrightnessDayLevel, "", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Сенсор яскравості (ніч)"), HTML_INPUT_RANGE, String(sensorBrightnessNightLevel).c_str(), HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME, HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME, 0, ADC_NUMBER_OF_VALUES - 1, ADC_STEP_FOR_BYTE, false, sensorBrightnessNightLevel, "", "" ) + String( F("</div>"
+    "</div>"
+  "</div>"
+  "<div class=\"fx fxsect\">"
+    "<div class=\"fxh\">"
+      "Інші налаштування"
+    "</div>"
+    "<div class=\"fxc\">"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Назва пристрою"), HTML_INPUT_TEXT, deviceName, HTML_PAGE_DEVICE_NAME_NAME, HTML_PAGE_DEVICE_NAME_NAME, 0, sizeof(deviceName) - 1, 0, false, false, "", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Розвернути зображення на 180°"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_ROTATE_DISPLAY_NAME, HTML_PAGE_ROTATE_DISPLAY_NAME, 0, 0, 0, false, isRotateDisplay, "", "" ) + String( F("</div>"
+    "</div>"
+  "</div>"
+  "<div class=\"fx fxsect\">"
+    "<div class=\"fxh\">"
+      "Дії"
+    "</div>"
+    "<div class=\"fxc\">"
+      "<div class=\"fi\">"
+        "<button type=\"submit\">Застосувати</button>"
+      "</div>"
+      "<div class=\"ft\">"
+        "<div class=\"fx\">"
+          "<span class=\"sub\"><a href=\"/testdim\">Перевірити нічний режим</a><span class=\"i\" title=\"Застосуйте налаштування перед перевіркою!\"></span></span>"
+          "<span class=\"sub\"><a href=\"/testled\">Перевірити матрицю</a></span>"
+        "</div>"
+        "<div class=\"fx\">"
+          "<span class=\"sub\"><a href=\"/update\">Оновити</a><span class=\"i\" title=\"Оновити прошивку. Поточна версія: ") ) + String( getFirmwareVersion() ) + String( F("\"></span></span>"
+          "<span class=\"sub\"><a href=\"/reset\">Відновити</a><span class=\"i\" title=\"Відновити до заводських налаштувань\"></span></span>"
+          "<span class=\"sub\"><a href=\"/reboot\">Перезавантажити</a></span>"
+        "</div>"
+      "</div>"
+    "</div>"
+  "</div>"
+"</form>"
+"<div class=\"fx ft\">"
+  "<span>"
+    "<div class=\"stat\">"
+      "<span class=\"btn\" onclick=\"this.classList.toggle('on');mnt();\">Яскравість</span>"
+      "<span>CUR <span id=\"b_cur\"></span></span>"
+      "<span>AVG <span id=\"b_avg\"></span></span>"
+      "<span>REQ <span id=\"b_req\"></span></span>"
+      "<span>DSP <span id=\"b_dsp\"></span></span>"
+    "</div>"
+  "</span>"
+"</div>") );
+  addHtmlPageEnd( content );
+  wifiWebServer.sendContent( content );
+  content = "";
 
   if( isApInitialized ) { //this resets AP timeout when user loads the page in AP mode
     apStartedMillis = millis();
@@ -1464,8 +1566,14 @@ const char HTML_PAGE_FILLUP_MID[] PROGMEM = "s linear forwards;}"
   "@keyframes fill{0%{width:0;}100%{width:100%;}}"
 "</style>"
 "<div id=\"fill\"><div></div></div>"  
-"<script>document.addEventListener(\"DOMContentLoaded\",()=>{setTimeout(()=>{window.location.href=\"/\";},";
-const char HTML_PAGE_FILLUP_END[] PROGMEM = "000);});</script>";
+"<script>"
+  "document.addEventListener(\"DOMContentLoaded\",()=>{"
+    "setTimeout(()=>{"
+      "window.location.href=\"/\";"
+    "},";
+const char HTML_PAGE_FILLUP_END[] PROGMEM = "000);"
+  "});"
+"</script>";
 
 String getHtmlPageFillup( String animationLength, String redirectLength ) {
   String result;
@@ -1498,17 +1606,17 @@ void handleWebServerPost() {
   String htmlPageSsidNameReceived = wifiWebServer.arg( HTML_PAGE_WIFI_SSID_NAME );
   String htmlPageSsidPasswordReceived = wifiWebServer.arg( HTML_PAGE_WIFI_PWD_NAME );
 
-  if( htmlPageSsidNameReceived.length() > getWiFiClientSsidNameMaxLength() ) {
+  if( htmlPageSsidNameReceived.length() > sizeof(wiFiClientSsid) - 1 ) {
     addHtmlPageStart( content );
-    content += String( F("<h2>Error: SSID Name exceeds maximum length of ") ) + String( getWiFiClientSsidNameMaxLength() ) + String( F("</h2>") );
+    content += String( F("<h2>Error: SSID Name exceeds maximum length of ") ) + String( sizeof(wiFiClientSsid) - 1 ) + String( F("</h2>") );
     addHtmlPageEnd( content );
     wifiWebServer.sendHeader( String( F("Content-Length") ).c_str(), String( content.length() ) );
     wifiWebServer.send( 400, getContentType( F("html") ), content );
     return;
   }
-  if( htmlPageSsidPasswordReceived.length() > getWiFiClientSsidPasswordMaxLength() ) {
+  if( htmlPageSsidPasswordReceived.length() > sizeof(wiFiClientPassword) - 1 ) {
     addHtmlPageStart( content );
-    content += String( F("<h2>Error: SSID Password exceeds maximum length of ") ) + String( getWiFiClientSsidPasswordMaxLength() ) + String( F("</h2>") );
+    content += String( F("<h2>Error: SSID Password exceeds maximum length of ") ) + String( sizeof(wiFiClientPassword) - 1 ) + String( F("</h2>") );
     addHtmlPageEnd( content );
     wifiWebServer.sendHeader( String( F("Content-Length") ).c_str(), String( content.length() ) );
     wifiWebServer.send( 400, getContentType( F("html") ), content );
@@ -1642,6 +1750,9 @@ void handleWebServerPost() {
     }
   }
 
+  String htmlPageDeviceNameReceived = wifiWebServer.arg( HTML_PAGE_DEVICE_NAME_NAME );
+
+
   bool isWiFiChanged = strcmp( wiFiClientSsid, htmlPageSsidNameReceived.c_str() ) != 0 || strcmp( wiFiClientPassword, htmlPageSsidPasswordReceived.c_str() ) != 0;
 
   String waitTime = isWiFiChanged ? String(TIMEOUT_CONNECT_WIFI_SYNC/1000 + 6) : "2";
@@ -1676,7 +1787,7 @@ void handleWebServerPost() {
     displayFontTypeNumber = displayFontTypeNumberReceived;
     isDisplayRerenderRequiredAfterSettingChanged = true;
     Serial.println( F("Display font updated") );
-    writeEepromIntValue( eepromDisplayFontTypeNumberIndex, displayFontTypeNumberReceived );
+    writeEepromUintValue( eepromDisplayFontTypeNumberIndex, displayFontTypeNumberReceived );
   }
 
   if( isDisplayBoldFondUsedReceivedPopulated && isDisplayBoldFondUsedReceived != isDisplayBoldFontUsed ) {
@@ -1703,7 +1814,7 @@ void handleWebServerPost() {
   if( animationTypeNumberReceivedPopulated && animationTypeNumberReceived != animationTypeNumber ) {
     animationTypeNumber = animationTypeNumberReceived;
     Serial.println( F("Display animation updated") );
-    writeEepromIntValue( eepromAnimationTypeNumberIndex, animationTypeNumberReceived );
+    writeEepromUintValue( eepromAnimationTypeNumberIndex, animationTypeNumberReceived );
   }
 
   if( isSlowSemicolonAnimationReceivedPopulated && isSlowSemicolonAnimationReceived != isSlowSemicolonAnimation ) {
@@ -1719,7 +1830,7 @@ void handleWebServerPost() {
     isDisplayIntensityUpdateRequiredAfterSettingChanged = true;
     isDisplayRerenderRequiredAfterSettingChanged = true;
     Serial.println( F("Display brightness updated") );
-    writeEepromIntValue( eepromDisplayDayBrightnessIndex, displayDayBrightnessReceived );
+    writeEepromUintValue( eepromDisplayDayBrightnessIndex, displayDayBrightnessReceived );
   }
 
   if( displayNightBrightnessReceivedPopulated && displayNightBrightnessReceived != displayNightBrightness ) {
@@ -1727,7 +1838,7 @@ void handleWebServerPost() {
     isDisplayIntensityUpdateRequiredAfterSettingChanged = true;
     isDisplayRerenderRequiredAfterSettingChanged = true;
     Serial.println( F("Display night mode brightness updated") );
-    writeEepromIntValue( eepromDisplayNightBrightnessIndex, displayNightBrightnessReceived );
+    writeEepromUintValue( eepromDisplayNightBrightnessIndex, displayNightBrightnessReceived );
   }
 
   if( sensorBrightnessDayReceivedPopulated && sensorBrightnessDayReceived != sensorBrightnessDayLevel ) {
@@ -1735,7 +1846,7 @@ void handleWebServerPost() {
     isDisplayIntensityUpdateRequiredAfterSettingChanged = true;
     isDisplayRerenderRequiredAfterSettingChanged = true;
     Serial.println( F("Sensor day brightness level updated") );
-    writeEepromIntValue( eepromSensorBrightnessDayLevelIndex, (uint8_t)( sensorBrightnessDayReceived / ADC_STEP_FOR_BYTE ) );
+    writeEepromUintValue( eepromSensorBrightnessDayLevelIndex, (uint8_t)( sensorBrightnessDayReceived / ADC_STEP_FOR_BYTE ) );
   }
 
   if( sensorBrightnessNightReceivedPopulated && sensorBrightnessNightReceived != sensorBrightnessNightLevel ) {
@@ -1743,15 +1854,22 @@ void handleWebServerPost() {
     isDisplayIntensityUpdateRequiredAfterSettingChanged = true;
     isDisplayRerenderRequiredAfterSettingChanged = true;
     Serial.println( F("Sensor night brightness level updated") );
-    writeEepromIntValue( eepromSensorBrightnessNightLevelIndex, (uint8_t)( sensorBrightnessNightReceived / ADC_STEP_FOR_BYTE ) );
+    writeEepromUintValue( eepromSensorBrightnessNightLevelIndex, (uint8_t)( sensorBrightnessNightReceived / ADC_STEP_FOR_BYTE ) );
   }
+
+  if( strcmp( deviceName, htmlPageDeviceNameReceived.c_str() ) != 0 ) {
+    Serial.println( F("Device name updated") );
+    strncpy( deviceName, htmlPageDeviceNameReceived.c_str(), sizeof(deviceName) );
+    writeEepromCharArray( eepromDeviceNameIndex, deviceName, sizeof(deviceName) );
+  }
+
 
   if( isWiFiChanged ) {
     Serial.println( F("WiFi settings updated") );
     strncpy( wiFiClientSsid, htmlPageSsidNameReceived.c_str(), sizeof(wiFiClientSsid) );
+    writeEepromCharArray( eepromWiFiSsidIndex, wiFiClientSsid, sizeof(wiFiClientSsid) );
     strncpy( wiFiClientPassword, htmlPageSsidPasswordReceived.c_str(), sizeof(wiFiClientPassword) );
-    writeEepromCharArray( eepromWiFiSsidIndex, wiFiClientSsid, WIFI_SSID_MAX_LENGTH );
-    writeEepromCharArray( eepromWiFiPasswordIndex, wiFiClientPassword, WIFI_PASSWORD_MAX_LENGTH );
+    writeEepromCharArray( eepromWiFiPasswordIndex, wiFiClientPassword, sizeof(wiFiClientPassword) );
     shutdownAccessPoint();
     connectToWiFiSync();
   }
@@ -1898,11 +2016,11 @@ void handleWebServerGetReset() {
   wifiWebServer.sendHeader( String( F("Content-Length") ).c_str(), String( content.length() ) );
   wifiWebServer.send( 200, getContentType( F("html") ), content );
 
-  for( uint16_t eepromIndex = 0; eepromIndex <= eepromLastByteIndex; eepromIndex++ ) {
-    EEPROM.write( eepromIndex, 255 );
-  }
+  writeEepromUintValue( eepromFlashDataVersionIndex, 255 );
   EEPROM.commit();
-  delay( 200 );
+  delay( 20 );
+
+  delay( 500 );
   ESP.restart();
 }
 
@@ -2027,7 +2145,7 @@ void handleWebServerGetMonitor() {
       "\t\t\"dsp\": ") ) + String( static_cast<uint8_t>( round( displayPreviousBrightness ) ) ) + String( F("\n"
     "\t},\n"
     "\t\"ram\": {\n"
-      "\t\t\"heap\": ") ) + String( ESP.getFreeHeap() ) + String( F("") );
+      "\t\t\"heap\": ") ) + String( ESP.getFreeHeap() );
       #ifdef ESP8266
       content = content + String( F(",\n"
         "\t\t\"frag\": ") ) + String( ESP.getHeapFragmentation() ) + String( F("\n") );
@@ -2037,6 +2155,13 @@ void handleWebServerGetMonitor() {
       content = content + String( F(""
     "\t},\n"
     "\t\"cpu\": {\n"
+      "\t\t\"chip\": \"") ) + 
+        #ifdef ESP8266
+        String( F("ESP8266") )
+        #else //ESP32 or ESP32S2
+        String( F("ESP32 / ESP32S2") )
+        #endif
+      + String( F("\",\n"
       "\t\t\"freq\": ") ) + String( ESP.getCpuFreqMHz() ) + String( F(",\n"
       "\t\t\"millis\": ") ) + String( millis() ) + String( F("\n"
     "\t},\n"
@@ -2066,9 +2191,18 @@ uint16_t getFontContentLength() {
 const String fontIdentifier = "TC1";
 
 void handleWebServerGetFontEditor() {
+  wifiWebServer.setContentLength( CONTENT_LENGTH_UNKNOWN );
+  wifiWebServer.send( 200, getContentType( F("html") ), "" );
+
   String content;
-  content.reserve( 13000 ); //currently it's around 11600
+  content.reserve( 6000 ); //currently 5000 max (when sending Html Page Start)
+
+  //5000
   addHtmlPageStart( content );
+  wifiWebServer.sendContent( content );
+  content = "";
+
+  //3500
   content += String( F("<style>"
     ".wrp{width:96vw;min-width:none;max-width:none;}"
     ".fw{font-size:1vw;user-select:none;}"
@@ -2077,9 +2211,9 @@ void handleWebServerGetFontEditor() {
     ".hw.prog_p1,.sw.prog_p1{display:none;}"
     ".hw{align-self:center;text-align:center;}"
     ".shw{align-self:center;text-align:center;font-size:3vw;font-weight:bold;}"
-    ".sh{background-color:#555;border:1px solid #555;padding:5px;}"
+    ".sh{background-color:#444;border:1px solid #555;padding:5px;}"
     ".pxl{display:flex;}"
-    ".pxl .px{flex:1;border:1px solid #555;aspect-ratio:1;}"
+    ".pxl .px{flex:1;border:1px solid #444;aspect-ratio:1;}"
     ".pxl .px:not(:first-child){border-left:none;}"
     ".pxl:not(:first-child) .px{border-top:none;}"
     ".px.px_off{background-color:#000;}"
@@ -2091,7 +2225,7 @@ void handleWebServerGetFontEditor() {
     ".sw.hhmm_0.width_w0 .px.x2,.sw.hhmm_0.width_w0 .px.x3,.sw.hhmm_0.width_w0 .px.x4,"
     ".slw.s_cf .px.x2,.slw.s_cf .px.x3,.slw.s_cf .px.x4,.slw.s_cf .px.x5,.slw.s_cf .px.x6,"
     ".slw.s_cl .px.x2,.slw.s_cl .px.x3,.slw.s_cl .px.x4,.slw.s_cl .px.x5,.slw.s_cl .px.x6,"
-    ".slw.s_cu .px.x2,.slw.s_cu .px.x3,.slw.s_cu .px.x4,.slw.s_cu .px.x5,.slw.s_cu .px.x6{background-color:#555;pointer-events:none;}"
+    ".slw.s_cu .px.x2,.slw.s_cu .px.x3,.slw.s_cu .px.x4,.slw.s_cu .px.x5,.slw.s_cu .px.x6{background-color:#444;pointer-events:none;}"
   "</style>"
   "<script>"
     "let fontId='") ) + fontIdentifier + String( F("';"
@@ -2140,7 +2274,12 @@ void handleWebServerGetFontEditor() {
           "px.classList.toggle('px_off');"
         "});"
       "});"
-    "});"
+    "});" ) );
+  wifiWebServer.sendContent( content );
+  content = "";
+
+  //3600
+  content += String( F(""
     "const createDom=(()=>{"
       "let dom='<div class=\"fw\"><div class=\"hlw\"><div></div>'+getHeadersDom()+'</div>';"
       "symbols.forEach(s=>{"
@@ -2302,9 +2441,8 @@ void handleWebServerGetFontEditor() {
     "</div>"
   "</div>") );
   addHtmlPageEnd( content );
-
-  wifiWebServer.sendHeader( String( F("Content-Length") ).c_str(), String( content.length() ) );
-  wifiWebServer.send( 200, getContentType( F("html") ), content );
+  wifiWebServer.sendContent( content );
+  content = "";
 }
 
 void handleWebServerGetFont() {
