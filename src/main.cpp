@@ -2155,7 +2155,7 @@ void handleWebServerGetMonitor() {
       content = content + String( F(""
     "\t},\n"
     "\t\"cpu\": {\n"
-      "\t\t\"chip\": \"") ) + 
+      "\t\t\"chip\": \"") ) +
         #ifdef ESP8266
         String( F("ESP8266") )
         #else //ESP32 or ESP32S2
