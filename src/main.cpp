@@ -1391,9 +1391,13 @@ void handleWebServerGet() {
     "}else{"
       "fetch(\"https://raw.githubusercontent.com/dkurylo/clock-esp/refs/heads/main/src/fw_version.txt\",{cache:\"no-cache\"}).then(resp=>resp.text()).then(data=>{"
         "data=data.replace(/^\"|\"$/g,\"\");"
-        "if(fw!=data){"
-          "let up=document.getElementById(\"fwup\");if(up){up.classList.add(\"act\");up.textContent+=' ('+fw+' → '+data+')';}"
-        "}"
+        "let fwup=document.getElementById(\"fwup\");if(fwup){fwup.insertAdjacentHTML('afterend',' ('+((fw!=data)?('<a href=\""
+        #ifdef ESP8266
+        "https://github.com/dkurylo/clock-esp/tree/main/.pio/build/d1_mini"
+        #else //ESP32 or ESP32S2
+        "https://github.com/dkurylo/clock-esp/tree/main/.pio/build/lolin_s2_mini"
+        #endif
+        "\" target=\"_blank\" class=\"act\">'+fw+' → '+data+'</a>'):(fw))+')');}"
       "}).catch(e=>{});"
     "}"
     "if(devnm!=''){"
@@ -1556,7 +1560,7 @@ void handleWebServerGet() {
           "<span class=\"sub\"><a href=\"/testled\">Перевірити матрицю</a></span>"
         "</div>"
         "<div class=\"fx\">"
-          "<span class=\"sub\"><a href=\"/update\">Оновити</a><span class=\"i\" title=\"Оновити прошивку. Поточна версія: ") ) + String( getFirmwareVersion() ) + String( F("\"></span></span>"
+          "<span class=\"sub\"><a href=\"/update\">Оновити</a><span class=\"i\" title=\"Оновити прошивку\"></span></span>"
           "<span class=\"sub\"><a href=\"/reset\">Відновити</a><span class=\"i\" title=\"Відновити до заводських налаштувань\"></span></span>"
           "<span class=\"sub\"><a href=\"/reboot\">Перезавантажити</a></span>"
         "</div>"
