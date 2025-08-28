@@ -67,7 +67,9 @@
 
 uint8_t EEPROM_FLASH_DATA_VERSION = 2; //change to next number when eeprom data format is changed. 255 is a reserved value: is set to 255 when: hard reset pin is at 3.3V (high); during factory reset procedure; when FW is loaded to a new device (EEPROM reads FF => 255)
 uint8_t eepromFlashDataVersion = EEPROM_FLASH_DATA_VERSION;
-const char* getFirmwareVersion() { const char* result = "1.00"; return result; }
+const char* getFirmwareVersion() { const char* result =
+#include "fw_version.txt"
+; return result; }
 
 //wifi access point configuration
 const char* getWiFiAccessPointSsid() { const char* result = "Clock"; return result; };
@@ -1387,8 +1389,8 @@ void handleWebServerGet() {
         "fetch(\"/ping\").catch(e=>{});"
       "},30000);"
     "}else{"
-      "fetch(\"https://raw.githubusercontent.com/dkurylo/clock-esp/refs/heads/main/fw_version.txt\",{cache:\"no-cache\"}).then(resp=>resp.text()).then(data=>{"
-        "if(fw!=data){"
+      "fetch(\"https://raw.githubusercontent.com/dkurylo/clock-esp/refs/heads/main/fw_version.txt\",{cache:\"no-cache\"}).then(resp=>resp.text()?.replace(/^\"|\"$/g,\"\")).then(data=>{"
+        "if(data&&fw!=data){"
           "let up=document.getElementById(\"fwup\");if(up){up.classList.add(\"act\");up.textContent+=' ('+fw+' → '+data+')';}"
         "}"
       "}).catch(e=>{});"
