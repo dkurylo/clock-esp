@@ -44,6 +44,14 @@
 #define BRIGHTNESS_INPUT_PIN 3
 #endif
 
+#ifdef ESP8266
+
+#elif defined(ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32S3)
+  #define HARD_RESET_PIN 14 //has to be high on load to perform hard reset
+#else
+
+#endif
+
 //ESP8266 has 10-bit ADC (0-1023)
 //ESP32 has 12-bit ADC (0-4095)
 //ESP32-S2 has 13-bit ADC (0-8191)
@@ -594,9 +602,14 @@ void setDisplayBrightness( bool isInit ) {
   }
 }
 
-void initDisplay() {
-  calculateDisplayBrightness();
+void initDisplayPhase1() {
   display.begin();
+  display.control( MD_MAX72XX::INTENSITY, 0 );
+  display.clear();
+}
+
+void initDisplayPhase2() {
+  calculateDisplayBrightness();
   setDisplayBrightness( true );
   display.clear();
 }
@@ -2133,6 +2146,25 @@ void handleWebServerGetMonitor() {
     secondStr = ( second < 10 ? "0" : "" ) + String( second );
   }
 
+  String flash_mode = "";
+  FlashMode_t flash_mode_enum = ESP.getFlashChipMode();
+  switch( flash_mode_enum ) {
+    case FlashMode_t::FM_QIO: flash_mode = String( F("QIO") ); break;
+    case FlashMode_t::FM_QOUT: flash_mode = String( F("QOUT") ); break;
+    case FlashMode_t::FM_DIO: flash_mode = String( F("DIO") ); break;
+    case FlashMode_t::FM_DOUT: flash_mode = String( F("DOUT") ); break;
+    #ifdef ESP8266
+
+    #elif defined(ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32S3)
+    case FlashMode_t::FM_FAST_READ: flash_mode = String( F("FAST_READ") ); break;
+    case FlashMode_t::FM_SLOW_READ: flash_mode = String( F("SLOW_READ") ); break;
+    #else
+    case FlashMode_t::FM_FAST_READ: flash_mode = String( F("FAST_READ") ); break;
+    case FlashMode_t::FM_SLOW_READ: flash_mode = String( F("SLOW_READ") ); break;
+    #endif
+    default: flash_mode = String( F("Unknown") ); break;
+  }
+
   String content = String( F(""
   "{\n"
     "\t\"net\": {\n"
@@ -2157,12 +2189,16 @@ void handleWebServerGetMonitor() {
     "\t\"cpu\": {\n"
       "\t\t\"chip\": \"") ) +
         #ifdef ESP8266
-        String( F("ESP8266") )
-        #else //ESP32 or ESP32S2
-        String( F("ESP32 / ESP32S2") )
+        String( F("ESP8266") ) +
+        #elif defined(ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32S3)
+        String( F("ESP32S2 / ESP32S3") ) +
+        #else
+        String( F("ESP32") ) +
         #endif
-      + String( F("\",\n"
-      "\t\t\"freq\": ") ) + String( ESP.getCpuFreqMHz() ) + String( F(",\n"
+      String( F("\",\n"
+      "\t\t\"cpu_freq\": ") ) + String( ESP.getCpuFreqMHz() ) + String( F(",\n"
+      "\t\t\"flash_freq\": ") ) + String( ESP.getFlashChipSpeed() / 1000000 ) + String( F(",\n"
+      "\t\t\"flash_mode\": \"") ) + flash_mode + String( F("\",\n"
       "\t\t\"millis\": ") ) + String( millis() ) + String( F("\n"
     "\t},\n"
     "\t\"clock\": {\n"
@@ -2605,16 +2641,28 @@ void WiFiEvent( WiFiEvent_t event ) {
 
 
 void setup() {
+  initVariables();
   initInternalLed();
+  initDisplayPhase1();
 
   Serial.begin( 115200 );
   Serial.println();
   Serial.println( String( F("Clock by Dmytro Kurylo. V@") ) + getFirmwareVersion() + String( F(" CPU@") ) + String( ESP.getCpuFreqMHz() ) );
 
+  #ifdef ESP8266
+
+  #elif defined(ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32S3)
+  pinMode( HARD_RESET_PIN, INPUT_PULLDOWN );
+  if( digitalRead( HARD_RESET_PIN ) ) {
+    eepromFlashDataVersion = 255;
+  }
+  #else
+
+  #endif
+
   initEeprom();
   loadEepromData();
-  initVariables();
-  initDisplay();
+  initDisplayPhase2();
   LittleFS.begin();
 
   configureWebServer();
