@@ -1389,7 +1389,7 @@ void handleWebServerGet() {
         "fetch(\"/ping\").catch(e=>{});"
       "},30000);"
     "}else{"
-      "fetch(\"https://raw.githubusercontent.com/dkurylo/clock-esp/refs/heads/main/fw_version.txt\",{cache:\"no-cache\"}).then(resp=>resp.text()?.replace(/^\"|\"$/g,\"\")).then(data=>{"
+      "fetch(\"https://raw.githubusercontent.com/dkurylo/clock-esp/refs/heads/main/src/fw_version.txt\",{cache:\"no-cache\"}).then(resp=>resp.text()?.replace(/^\"|\"$/g,\"\")).then(data=>{"
         "if(data&&fw!=data){"
           "let up=document.getElementById(\"fwup\");if(up){up.classList.add(\"act\");up.textContent+=' ('+fw+' → '+data+')';}"
         "}"
