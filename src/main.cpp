@@ -1282,7 +1282,7 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
       "#exdw:after,#exdw .exdp:after{content:'';display:block;clear:both;}"
       ".ap{zoom:3;image-rendering:pixelated;padding-left:0.2em;}"
       "#gc{width:100%;aspect-ratio:2/1;border:1px solid #aaa;display:flex;flex-direction:column;margin:.3em 0 1.5em 1em;}" //graph start
-      "#gw{position:relative;width:100%;flex:1;font-size:clamp(9px,1.3vw,14px);}"
+      "#gw{position:relative;width:100%;flex:1;font-size:0.65em;}"
       "#gr,#yg,#xg,.yr,.yl,.xm,.xl,.sl{position:absolute;pointer-events:none;}"
       "#gr,#yg,#xg{inset:0;}"
       "#gr{display:flex;align-items:flex-end;pointer-events:auto;}"
