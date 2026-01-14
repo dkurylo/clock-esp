@@ -2372,9 +2372,9 @@ void handleWebServerGetFontEditor() {
   wifiWebServer.send( 200, getContentType( F("html") ), "" );
 
   String content;
-  content.reserve( 6000 ); //currently 5000 max (when sending Html Page Start)
+  content.reserve( 6000 ); //currently 5600 max (when sending Html Page Start)
 
-  //5000
+  //5600
   addHtmlPageStart( content );
   wifiWebServer.sendContent( content );
   content = "";
@@ -2455,7 +2455,7 @@ void handleWebServerGetFontEditor() {
   wifiWebServer.sendContent( content );
   content = "";
 
-  //3600
+  //3700
   content += String( F(""
     "const createDom=(()=>{"
       "let dom='<div class=\"fw\"><div class=\"hlw\"><div></div>'+getHeadersDom()+'</div>';"
