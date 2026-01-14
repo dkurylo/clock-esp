@@ -1292,7 +1292,7 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
       ".xm{top:0;bottom:0;width:0;border-left:1px dotted RGBA(255,255,255,.35);}"
       ".xl{bottom:-2.5em;transform:translateY(-1.5em);width:3em;text-align:right;rotate:-90deg;font-size:.75em;color:#aaa;white-space:nowrap;}"
       ".sl{top:0;bottom:0;width:0;border-left:1px solid RGBA(255,255,255,.45);z-index:4;}"
-      ".cv{top:0;bottom:0;width:1px;background:#55F;opacity:.9;z-index:5;position:absolute;transition:left 0.5s linear;}" //graph end
+      ".cv{top:0;bottom:0;width:1px;background:#55F;opacity:.9;z-index:5;position:absolute;transition:left 0.3s ease;}" //graph end
       "@media(max-device-width:800px) and (orientation:portrait){"
         ":root{--f:4vw;}"
         ".wrp{width:94%;max-width:100%;}"
