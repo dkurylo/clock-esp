@@ -546,6 +546,7 @@ double displayCurrentBrightness = static_cast<double>(displayNightBrightness);
 double displayPreviousBrightness = -1.0;
 double sensorBrightnessAverage = -1.0;
 int brightnessDiffSustainedMillis = 0;
+float steepnessCoefficient = 2.0;
 
 void calculateDisplayBrightness() {
   uint16_t currentBrightness = analogRead( BRIGHTNESS_INPUT_PIN );
@@ -562,7 +563,6 @@ void calculateDisplayBrightness() {
     displayCurrentBrightness = static_cast<double>(displayNightBrightness);
   } else {
     float normalizedSensorBrightnessAverage = (float)(sensorBrightnessAverage - sensorBrightnessNightLevel) / ( sensorBrightnessDayLevel - sensorBrightnessNightLevel );
-    float steepnessCoefficient = 2.0;
     float easingCoefficient = 1 - powf( 1 - normalizedSensorBrightnessAverage, steepnessCoefficient );
     displayCurrentBrightness = displayNightBrightness + static_cast<double>( (displayDayBrightness - displayNightBrightness ) * easingCoefficient );
     //displayCurrentBrightness = displayNightBrightness + static_cast<double>( displayDayBrightness - displayNightBrightness ) * ( sensorBrightnessAverage - sensorBrightnessNightLevel ) / ( sensorBrightnessDayLevel - sensorBrightnessNightLevel );
@@ -1232,9 +1232,12 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
       ".fx .fi{display:flex;align-items:center;margin-top:0.3em;width:100%;}"
       ".fx .fi:first-of-type,.fx.fv .fi{margin-top:0;}"
       ".fv{flex-direction:column;align-items:flex-start;}"
-      ".ex.ext.exton{color:#AAA;cursor:pointer;}"
-      ".ex.ext.extoff{color:#666;cursor:default;}"
+      ".ex.ext.exton,.ex.ext.extfwon{cursor:pointer;}"
+      ".ex.ext.extoff,.ex.ext.extfwoff{cursor:default;color:#666;}"
+      ".ex.ext.exton{color:#AAA;}"
+      ".ex.ext.extfwon,.ex.ext.extfwoff{flex:1;display:flex;}"
       ".ex.ext:after{display:inline-block;content:\"▶\";}"
+      ".ex.ext.extfwon:after,.ex.ext.extfwoff:after{margin-left:auto;}"
       ".ex.exon .ex.ext:after{transform:rotate(90deg);}"
       ".ex.exc{height:0;margin-top:0;}.ex.exc>*{visibility:hidden;}"
       ".ex.exc.exon{height:inherit;}.ex.exc.exon>*{visibility:initial;}"
@@ -1278,6 +1281,18 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
       "#exdw:before{padding-top:25%;}"
       "#exdw:after,#exdw .exdp:after{content:'';display:block;clear:both;}"
       ".ap{zoom:3;image-rendering:pixelated;padding-left:0.2em;}"
+      "#gc{width:100%;aspect-ratio:2/1;border:1px solid #aaa;display:flex;flex-direction:column;margin:.3em 0 1.5em 1em;}" //graph start
+      "#gw{position:relative;width:100%;flex:1;font-size:clamp(9px,1.3vw,14px);}"
+      "#gr,#yg,#xg,.yr,.yl,.xm,.xl,.sl{position:absolute;pointer-events:none;}"
+      "#gr,#yg,#xg{inset:0;}"
+      "#gr{display:flex;align-items:flex-end;pointer-events:auto;}"
+      ".gbar{background:#4caf50;}"
+      ".yr{left:0;right:0;height:1px;border-top:1px dotted RGBA(255,255,255,.35);}"
+      ".yl{left:-2em;top:50%;transform:translateY(-50%);font-size:.75em;color:#aaa;text-align:right;width:1.5em;}"
+      ".xm{top:0;bottom:0;width:0;border-left:1px dotted RGBA(255,255,255,.35);}"
+      ".xl{bottom:-2.5em;transform:translateY(-1.25em);width:3em;text-align:right;rotate:-90deg;font-size:.75em;color:#aaa;white-space:nowrap;}"
+      ".sl{top:0;bottom:0;width:0;border-left:1px solid RGBA(255,255,255,.45);z-index:4;}"
+      ".cv{top:0;bottom:0;width:1px;background:#55F;opacity:.9;z-index:5;position:absolute;transition:left 0.5s linear;}" //graph end
       "@media(max-device-width:800px) and (orientation:portrait){"
         ":root{--f:4vw;}"
         ".wrp{width:94%;max-width:100%;}"
@@ -1370,14 +1385,14 @@ void handleWebServerGet() {
   wifiWebServer.send( 200, getContentType( F("html") ), "" );
 
   String content;
-  content.reserve( 6000 ); //currently 5000 max (when sending Html Page Start)
+  content.reserve( 6000 ); //currently 5600 max (when sending Html Page Start)
 
-  //5000
+  //5600
   addHtmlPageStart( content );
   wifiWebServer.sendContent( content );
   content = "";
 
-  //3200
+  //4300
   content += String( F(""
 "<script>"
   "let devnm=\"" ) ) + String( deviceName ) + String( F("\";"
@@ -1407,6 +1422,7 @@ void handleWebServerGet() {
     "dt();"
     "pv();"
     "mnf(true);"
+    "graph.draw(true);"
   "});"
   "function dt(){"
     "let ts=") ) + String( timeClient.isTimeSet() || ( isCustomDateTimeSet && calculateDiffMillis( customDateTimeReceivedAt, millis() ) <= DELAY_NTP_TIME_SYNC ) ) + String( F(";"
@@ -1457,6 +1473,7 @@ void handleWebServerGet() {
       "clearTimeout(timeoutId);"
       "for(const[key,value]of Object.entries(data.brt)){"
         "document.getElementById(\"b_\"+key).innerText=value;"
+        "graph.drawCurVal(data.brt.avg);"
       "}"
     "})"
     ".catch(e=>{"
@@ -1473,7 +1490,117 @@ void handleWebServerGet() {
       "mnf();"
     "},5000);"
   "}"
-"</script>"
+  "let graph={" //graph start
+    "gp:{"
+      "cv:-1,"
+      "ns:0,"
+      "ds:0,"
+      "nb:0,"
+      "db:0,"
+      "k:" ) ) + String( steepnessCoefficient ).c_str() + String( F(","
+      "smin:0,"
+      "smax:0,"
+      "bl:16"
+    "},"
+    "segs:[],"
+    "brt(s){"
+      "let p=this.gp;"
+      "if(s>=p.ds)return p.db;"
+      "if(s<=p.ns)return p.nb;"
+      "let n=(s-p.ns)/(p.ds-p.ns);"
+      "let e=1-Math.pow(1-n,p.k);"
+      "return Math.round(p.nb+(p.db-p.nb)*e);"
+    "},"
+    "mkSegs(){"
+      "let sg=[],st=this.gp.smin,pb=this.brt(this.gp.smin);"
+      "for(let s=this.gp.smin+1;s<=this.gp.smax;s++){"
+        "let b=this.brt(s);"
+        "if(b!==pb){sg.push({f:st,t:s,b:pb});st=s;pb=b;}"
+      "}"
+      "sg.push({f:st,t:this.gp.smax,b:pb});"
+      "this.segs=sg;"
+    "},"
+    "drawY(){"
+      "let g=document.getElementById(\"yg\");"
+      "g.innerHTML=\"\";"
+      "for(let l=0;l<this.gp.bl;l++){"
+        "let r=document.createElement(\"div\");"
+        "r.className=\"yr\";"
+        "r.style.top=((this.gp.bl-1-l)/(this.gp.bl-1)*100)+\"%\";"
+        "if(l==0||l==this.gp.bl-1)r.style.borderTop=\"none\";"
+        "let t=document.createElement(\"div\");"
+        "t.className=\"yl\";t.textContent=l;"
+        "r.appendChild(t);"
+        "g.appendChild(r);"
+      "}"
+    "},"
+    "drawG(){"
+      "let g=document.getElementById(\"gr\");g.innerHTML=\"\";"
+      "for(let s of this.segs){"
+        "let d=document.createElement(\"div\");"
+        "d.className=\"gbar\";"
+        "d.style.width=((s.t-s.f)/this.gp.smax*100)+\"%\";"
+        "d.style.height=(s.b/(this.gp.bl-1)*100)+\"%\";"
+        "g.appendChild(d);"
+      "}"
+    "},"
+    "drawX(){"
+      "let g=document.getElementById(\"xg\");g.innerHTML=\"\";"
+      "for(let s of this.segs){"
+        "if(s.f==this.gp.smin||s.f==this.gp.smax)continue;"
+        "let x=(s.f/this.gp.smax*100)+\"%\";"
+        "let l=document.createElement(\"div\");l.className=\"xm\";l.style.left=x;"
+        "let t=document.createElement(\"div\");t.className=\"xl\";t.style.left=x;t.textContent=s.f;"
+        "g.appendChild(l);g.appendChild(t);"
+      "}"
+      "let mn=document.createElement(\"div\"),mx=document.createElement(\"div\");"
+      "mn.className=mx.className=\"xm sl\";"
+      "mn.style.left=(this.gp.ns/this.gp.smax*100)+\"%\";"
+      "mx.style.left=(this.gp.ds/this.gp.smax*100)+\"%\";"
+      "g.appendChild(mn);g.appendChild(mx);"
+    "},"
+    "draw(isInit){"
+      "let p=this.gp;"
+      "let brsd=document.getElementById(\"brsd\");"
+      "p.ns=parseInt(document.getElementById(\"brsn\").value);"
+      "p.ds=parseInt(brsd.value);"
+      "p.nb=parseInt(document.getElementById(\"brtn\").value);"
+      "p.db=parseInt(document.getElementById(\"brtd\").value);"
+      "p.smin=parseInt(brsd.min);"
+      "p.smax=parseInt(brsd.max);"
+      "if(isInit){"
+        "this.drawY();"
+      "}"
+      "this.mkSegs();"
+      "this.drawX();"
+      "this.drawG();"
+    "},"
+    "drawCurVal(cv){"
+      "const p=this.gp;"
+      "p.cv=cv;"
+      "const el=document.getElementById(\"cv\");"
+      "if(p.cv==-1){"
+        "if(el)el.remove();"
+        "return;"
+      "}"
+      "let pct=(p.cv-p.smin)/(p.smax-p.smin)*100;"
+      "if(!el){"
+        "const div=document.createElement(\"div\");"
+        "div.id=\"cv\";"
+        "div.className=\"cv\";"
+        "document.getElementById(\"xg\").appendChild(div);"
+        "div.style.left=pct+\"%\";"
+      "}else{"
+        "el.style.left=pct+\"%\";"
+      "}"
+    "}"
+  "};" //graph end
+"</script>" ) );
+  wifiWebServer.sendContent( content );
+  content = "";
+
+  //4800
+  content += String( F(""
 "<form method=\"POST\">"
   "<div class=\"fx fxsect\">"
     "<div class=\"fxh\">"
@@ -1511,12 +1638,7 @@ void handleWebServerGet() {
       "<div class=\"fi\">") ) + getHtmlInput( F("Вид шрифта"), HTML_INPUT_RANGE, String(displayFontTypeNumber).c_str(), HTML_PAGE_FONT_TYPE_NAME, HTML_PAGE_FONT_TYPE_NAME, 1, TCFonts::NUMBER_OF_FONTS_SUPPORTED, 0, false, displayFontTypeNumber, "onchange=\"pv();\"", "" ) + String( F("<span class=\"pl\"><a href=\"/fontedit\">Редактор</a></span></div>"
       "<div class=\"fi\">") ) + getHtmlInput( F("Жирний шрифт"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_BOLD_FONT_NAME, HTML_PAGE_BOLD_FONT_NAME, 0, 0, 0, false, isDisplayBoldFontUsed, "onchange=\"pv();\"", "" ) + String( F("</div>"
     "</div>"
-  "</div>" ) );
-  wifiWebServer.sendContent( content );
-  content = "";
-
-  //2700
-  content += String( F(""
+  "</div>"
   "<div class=\"fx fxsect\">"
     "<div class=\"fxh\">"
       "Анімація"
@@ -1531,10 +1653,14 @@ void handleWebServerGet() {
       "Яскравість"
     "</div>"
     "<div class=\"fxc\">"
-      "<div class=\"fi\">") ) + getHtmlInput( F("Яскравість вдень"), HTML_INPUT_RANGE, String(displayDayBrightness).c_str(), HTML_PAGE_BRIGHTNESS_DAY_NAME, HTML_PAGE_BRIGHTNESS_DAY_NAME, 0, 15, 0, false, displayDayBrightness, "", "" ) + String( F("</div>"
-      "<div class=\"fi\">") ) + getHtmlInput( F("Яскравість вночі"), HTML_INPUT_RANGE, String(displayNightBrightness).c_str(), HTML_PAGE_BRIGHTNESS_NIGHT_NAME, HTML_PAGE_BRIGHTNESS_NIGHT_NAME, 0, 15, 0, false, displayNightBrightness, "", "" ) + String( F("</div>"
-      "<div class=\"fi\">") ) + getHtmlInput( F("Сенсор яскравості (день)"), HTML_INPUT_RANGE, String(sensorBrightnessDayLevel).c_str(), HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME, HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME, 0, ADC_NUMBER_OF_VALUES - 1, ADC_STEP_FOR_BYTE, false, sensorBrightnessDayLevel, "", "" ) + String( F("</div>"
-      "<div class=\"fi\">") ) + getHtmlInput( F("Сенсор яскравості (ніч)"), HTML_INPUT_RANGE, String(sensorBrightnessNightLevel).c_str(), HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME, HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME, 0, ADC_NUMBER_OF_VALUES - 1, ADC_STEP_FOR_BYTE, false, sensorBrightnessNightLevel, "", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Яскравість вдень"), HTML_INPUT_RANGE, String(displayDayBrightness).c_str(), HTML_PAGE_BRIGHTNESS_DAY_NAME, HTML_PAGE_BRIGHTNESS_DAY_NAME, 0, 15, 0, false, displayDayBrightness, "onchange=\"graph.draw();\"", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Яскравість вночі"), HTML_INPUT_RANGE, String(displayNightBrightness).c_str(), HTML_PAGE_BRIGHTNESS_NIGHT_NAME, HTML_PAGE_BRIGHTNESS_NIGHT_NAME, 0, 15, 0, false, displayNightBrightness, "onchange=\"graph.draw();\"", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Сенсор яскравості (день)"), HTML_INPUT_RANGE, String(sensorBrightnessDayLevel).c_str(), HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME, HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME, 0, ADC_NUMBER_OF_VALUES - 1, ADC_STEP_FOR_BYTE, false, sensorBrightnessDayLevel, "onchange=\"graph.draw();\"", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Сенсор яскравості (ніч)"), HTML_INPUT_RANGE, String(sensorBrightnessNightLevel).c_str(), HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME, HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME, 0, ADC_NUMBER_OF_VALUES - 1, ADC_STEP_FOR_BYTE, false, sensorBrightnessNightLevel, "onchange=\"graph.draw();\"", "" ) + String( F("</div>"
+      "<div class=\"fi fv\">"
+        "<div class=\"fi ex\"><div class=\"ex ext extfwon\" onclick=\"ex(this);\">Графік (сенсор &rarr; яскравість)</div></div>"
+        "<div class=\"fi ex exc\"><div class=\"fi\"><div id=\"gc\"><div id=\"gw\"><div id=\"gr\"></div><div id=\"yg\"></div><div id=\"xg\"></div></div></div></div></div>"
+      "</div>"
     "</div>"
   "</div>"
   "<div class=\"fx fxsect\">"
@@ -1561,7 +1687,7 @@ void handleWebServerGet() {
         "</div>"
         "<div class=\"fx\">"
           "<span class=\"sub\"><a href=\"/update\">Оновити</a><span class=\"i\" title=\"Оновити прошивку\"></span></span>"
-          "<span class=\"sub\"><a href=\"/reset\">Відновити</a><span class=\"i\" title=\"Відновити до заводських налаштувань\"></span></span>"
+          "<span class=\"sub\"><a href=\"/reset\" onclick=\"return confirm('Ви впевнені, що хочете відновити?');\">Відновити</a><span class=\"i\" title=\"Відновити до заводських налаштувань\"></span></span>"
           "<span class=\"sub\"><a href=\"/reboot\">Перезавантажити</a></span>"
         "</div>"
       "</div>"
