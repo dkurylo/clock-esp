@@ -1281,7 +1281,7 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
       "#exdw:before{padding-top:25%;}"
       "#exdw:after,#exdw .exdp:after{content:'';display:block;clear:both;}"
       ".ap{zoom:3;image-rendering:pixelated;padding-left:0.2em;}"
-      "#gc{width:100%;aspect-ratio:2/1;border:1px solid #aaa;display:flex;flex-direction:column;margin:0.2em 0 1.4em 0.8em;}" //graph start
+      "#gc{width:100%;aspect-ratio:2/1;border:1px solid #aaa;display:flex;flex-direction:column;margin:0.2em 0 1.5em 0.8em;}" //graph start
       "#gw{position:relative;width:100%;flex:1;font-size:0.65em;}"
       "#gr,#yg,#xg,.yr,.yl,.xm,.xl,.sl{position:absolute;pointer-events:none;}"
       "#gr,#yg,#xg{inset:0;}"
@@ -1290,7 +1290,7 @@ const char HTML_PAGE_START[] PROGMEM = "<!DOCTYPE html>"
       ".yr{left:0;right:0;height:1px;border-top:1px dotted RGBA(255,255,255,.35);}"
       ".yl{left:-2em;top:50%;transform:translateY(-50%);font-size:.75em;color:#aaa;text-align:right;width:1.5em;}"
       ".xm{top:0;bottom:0;width:0;border-left:1px dotted RGBA(255,255,255,.35);}"
-      ".xl{bottom:-2.5em;transform:translateY(-1.5em);width:3em;text-align:right;rotate:-90deg;font-size:.75em;color:#aaa;white-space:nowrap;}"
+      ".xl{bottom:-2.5em;transform:translateY(-1.5em);width:3em;text-align:right;rotate:-90deg;font-size:.75em;letter-spacing:0.05em;color:#aaa;white-space:nowrap;}"
       ".sl{top:0;bottom:0;width:0;border-left:1px solid RGBA(255,255,255,.45);z-index:4;}"
       ".cv{top:0;bottom:0;width:1px;background:#55F;opacity:.9;z-index:5;position:absolute;transition:left 0.3s ease;}" //graph end
       "@media(max-device-width:800px) and (orientation:portrait){"
