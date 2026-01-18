@@ -39,6 +39,15 @@
 #endif
 
 #ifdef ESP8266
+
+#else //ESP32 or ESP32S2
+#define BATTERY_PRESENT_PIN 34
+#define BATTERY_POWERED_PIN 33
+#endif
+bool isBatteryInstalled = false;
+bool isEnergySavingMode = false;
+
+#ifdef ESP8266
 #define BRIGHTNESS_INPUT_PIN A0
 #else //ESP32 or ESP32S2
 #define BRIGHTNESS_INPUT_PIN 3
@@ -65,11 +74,17 @@
 #define ADC_NUMBER_OF_VALUES ( 1 << ADC_RESOLUTION )
 #define ADC_STEP_FOR_BYTE ( ADC_NUMBER_OF_VALUES / ( 1 << ( 8 * sizeof( uint8_t ) ) ) )
 
-uint8_t EEPROM_FLASH_DATA_VERSION = 2; //change to next number when eeprom data format is changed. 255 is a reserved value: is set to 255 when: hard reset pin is at 3.3V (high); during factory reset procedure; when FW is loaded to a new device (EEPROM reads FF => 255)
+uint8_t EEPROM_FLASH_DATA_VERSION = 3; //change to next number when eeprom data format is changed. 255 is a reserved value: is set to 255 when: hard reset pin is at 3.3V (high); during factory reset procedure; when FW is loaded to a new device (EEPROM reads FF => 255)
 uint8_t eepromFlashDataVersion = EEPROM_FLASH_DATA_VERSION;
 const char* getFirmwareVersion() { const char* result =
 #include "fw_version.txt"
 ; return result; }
+
+//device name
+char deviceName[16 + 1];
+
+//wifi configuration
+bool isWiFiRadioShutDown = false;
 
 //wifi access point configuration
 const char* getWiFiAccessPointSsid() { const char* result = "Clock"; return result; };
@@ -77,9 +92,6 @@ const char* getWiFiAccessPointPassword() { const char* result = "1029384756"; re
 const IPAddress getWiFiAccessPointIp() { IPAddress result( 192, 168, 1, 1 ); return result; };
 const IPAddress getWiFiAccessPointNetMask() { IPAddress result( 255, 255, 255, 0 ); return result; };
 const uint32_t TIMEOUT_AP = 120000;
-
-//device name
-char deviceName[16 + 1];
 
 //wifi client configuration
 const char* getWiFiHostName() { const char* result = "Clock"; return result; }
@@ -119,6 +131,8 @@ bool isSingleDigitHourShown = false;
 bool isRotateDisplay = false;
 bool isClockAnimated = false;
 uint8_t animationTypeNumber = 1;
+uint8_t brightnessSteepnessCoefficient = 40;
+float brightnessSteepnessCoefficientStep = 0.05;
 
 //brightness settings
 #ifdef ESP8266
@@ -227,22 +241,31 @@ String getContentType( String fileExtension ) {
   return contentType;
 }
 
+void writeToSerial( String data, bool isNextLine ) {
+  if( isEnergySavingMode ) return;
+  if( isNextLine ) {
+    Serial.println( data );
+  } else {
+    Serial.print( data );
+  }
+}
+
 File getFileFromFlash( String fileName ) {
   bool isGzippedFileRequested = fileName.endsWith( F(".gz") );
 
   File root = LittleFS.open("/", "r");
   if (!root || !root.isDirectory()) {
-    Serial.println("Failed to open directory");
+    writeToSerial( F("Failed to open directory"), true );
   } else {
-    Serial.println("Succeeded to open directory");
+    writeToSerial( F("Succeeded to open directory"), true );
   }
   File file2 = root.openNextFile();
-  while (file2) {
-    Serial.print(file2.name());
+  while( file2 ) {
+    writeToSerial( file2.name(), false );
     file2 = root.openNextFile();
   }
 
-  File file = LittleFS.open( "/" + fileName + ( isGzippedFileRequested ? "" : ".gz" ), "r" );
+  File file = LittleFS.open( "/" + fileName + ( isGzippedFileRequested ? "" : String( F(".gz") ) ), "r" );
   if( !isGzippedFileRequested && !file ) {
     file = LittleFS.open( "/" + fileName, "r" );
   }
@@ -262,7 +285,8 @@ const uint16_t eepromDisplayDayBrightnessIndex = eepromIsDisplaySecondsShownInde
 const uint16_t eepromDisplayNightBrightnessIndex = eepromDisplayDayBrightnessIndex + 1;
 const uint16_t eepromSensorBrightnessDayLevelIndex = eepromDisplayNightBrightnessIndex + 1;
 const uint16_t eepromSensorBrightnessNightLevelIndex = eepromSensorBrightnessDayLevelIndex + 1;
-const uint16_t eepromIsSingleDigitHourShownIndex = eepromSensorBrightnessNightLevelIndex + 1;
+const uint16_t eepromBrightnessSteepnessCoefficientIndex = eepromSensorBrightnessNightLevelIndex + 1;
+const uint16_t eepromIsSingleDigitHourShownIndex = eepromBrightnessSteepnessCoefficientIndex + 1;
 const uint16_t eepromIsRotateDisplayIndex = eepromIsSingleDigitHourShownIndex + 1;
 const uint16_t eepromIsSlowSemicolonAnimationIndex = eepromIsRotateDisplayIndex + 1;
 const uint16_t eepromIsClockAnimatedIndex = eepromIsSlowSemicolonAnimationIndex + 1;
@@ -401,6 +425,7 @@ void loadEepromData() {
     readEepromUintValue( eepromSensorBrightnessNightLevelIndex, eepromSensorBrightnessNightLevel, true );
     sensorBrightnessNightLevel = ( (uint16_t)eepromSensorBrightnessNightLevel ) * ADC_STEP_FOR_BYTE;
     if( sensorBrightnessNightLevel > sensorBrightnessDayLevel ) sensorBrightnessNightLevel = sensorBrightnessDayLevel;
+    readEepromUintValue( eepromBrightnessSteepnessCoefficientIndex, brightnessSteepnessCoefficient, true );
     readEepromBoolValue( eepromIsSingleDigitHourShownIndex, isSingleDigitHourShown, true );
     readEepromBoolValue( eepromIsRotateDisplayIndex, isRotateDisplay, true );
     readEepromBoolValue( eepromIsSlowSemicolonAnimationIndex, isSlowSemicolonAnimation, true );
@@ -424,6 +449,7 @@ void loadEepromData() {
     writeEepromUintValue( eepromDisplayNightBrightnessIndex, displayNightBrightness );
     writeEepromUintValue( eepromSensorBrightnessDayLevelIndex, (uint8_t)( sensorBrightnessDayLevel / ADC_STEP_FOR_BYTE ) );
     writeEepromUintValue( eepromSensorBrightnessNightLevelIndex, (uint8_t)( sensorBrightnessNightLevel / ADC_STEP_FOR_BYTE ) );
+    writeEepromUintValue( eepromBrightnessSteepnessCoefficientIndex, brightnessSteepnessCoefficient );
     writeEepromBoolValue( eepromIsSingleDigitHourShownIndex, isSingleDigitHourShown );
     writeEepromBoolValue( eepromIsRotateDisplayIndex, isRotateDisplay );
     writeEepromBoolValue( eepromIsSlowSemicolonAnimationIndex, isSlowSemicolonAnimation );
@@ -445,7 +471,7 @@ void createAccessPoint() {
   if( isApInitialized ) return;
   isApInitialized = true;
   apStartedMillis = millis();
-  Serial.print( F("Creating WiFi AP...") );
+  writeToSerial( F("Creating WiFi AP..."), false );
   WiFi.softAPConfig( getWiFiAccessPointIp(), getWiFiAccessPointIp(), getWiFiAccessPointNetMask() );
 
   #ifdef ESP8266
@@ -454,19 +480,20 @@ void createAccessPoint() {
   String macAddress = String( ESP.getEfuseMac() );
   WiFi.softAP( ( String( getWiFiAccessPointSsid() ) + " " + macAddress.substring( macAddress.length() - 4 ) ).c_str(), getWiFiAccessPointPassword(), 0, false );
   #endif
-
+  isWiFiRadioShutDown = false;
   IPAddress accessPointIp = WiFi.softAPIP();
   dnsServer.start( 53, "*", accessPointIp );
-  Serial.println( String( F(" done | IP: ") ) + accessPointIp.toString() );
+  writeToSerial( String( F(" done | IP: ") ) + accessPointIp.toString(), true );
 }
 
 void shutdownAccessPoint() {
   if( !isApInitialized ) return;
   isApInitialized = false;
-  Serial.print( F("Shutting down WiFi AP...") );
+  writeToSerial( F("Shutting down WiFi AP..."), false );
   dnsServer.stop();
   WiFi.softAPdisconnect( true );
-  Serial.println( F(" done") );
+  isWiFiRadioShutDown = false;
+  writeToSerial( F(" done"), true );
 }
 
 
@@ -546,7 +573,6 @@ double displayCurrentBrightness = static_cast<double>(displayNightBrightness);
 double displayPreviousBrightness = -1.0;
 double sensorBrightnessAverage = -1.0;
 int brightnessDiffSustainedMillis = 0;
-float steepnessCoefficient = 2.0;
 
 void calculateDisplayBrightness() {
   uint16_t currentBrightness = analogRead( BRIGHTNESS_INPUT_PIN );
@@ -557,15 +583,19 @@ void calculateDisplayBrightness() {
     sensorBrightnessAverage = ( sensorBrightnessAverage * ( static_cast<double>(sensorBrightnessSamples) - static_cast<double>(1.0) ) + currentBrightness ) / static_cast<double>(sensorBrightnessSamples);
   }
 
-  if( sensorBrightnessAverage >= sensorBrightnessDayLevel ) {
-    displayCurrentBrightness = static_cast<double>(displayDayBrightness);
-  } else if( sensorBrightnessAverage <= sensorBrightnessNightLevel ) {
-    displayCurrentBrightness = static_cast<double>(displayNightBrightness);
+  if( isEnergySavingMode ) {
+    displayCurrentBrightness = static_cast<double>(0);
   } else {
-    float normalizedSensorBrightnessAverage = (float)(sensorBrightnessAverage - sensorBrightnessNightLevel) / ( sensorBrightnessDayLevel - sensorBrightnessNightLevel );
-    float easingCoefficient = 1 - powf( 1 - normalizedSensorBrightnessAverage, steepnessCoefficient );
-    displayCurrentBrightness = displayNightBrightness + static_cast<double>( (displayDayBrightness - displayNightBrightness ) * easingCoefficient );
-    //displayCurrentBrightness = displayNightBrightness + static_cast<double>( displayDayBrightness - displayNightBrightness ) * ( sensorBrightnessAverage - sensorBrightnessNightLevel ) / ( sensorBrightnessDayLevel - sensorBrightnessNightLevel );
+    if( sensorBrightnessAverage >= sensorBrightnessDayLevel ) {
+      displayCurrentBrightness = static_cast<double>(displayDayBrightness);
+    } else if( sensorBrightnessAverage <= sensorBrightnessNightLevel ) {
+      displayCurrentBrightness = static_cast<double>(displayNightBrightness);
+    } else {
+      float normalizedSensorBrightnessAverage = (float)(sensorBrightnessAverage - sensorBrightnessNightLevel) / ( sensorBrightnessDayLevel - sensorBrightnessNightLevel );
+      float easingCoefficient = 1 - powf( 1 - normalizedSensorBrightnessAverage, brightnessSteepnessCoefficient*brightnessSteepnessCoefficientStep );
+      displayCurrentBrightness = displayNightBrightness + static_cast<double>( (displayDayBrightness - displayNightBrightness ) * easingCoefficient );
+      //displayCurrentBrightness = displayNightBrightness + static_cast<double>( displayDayBrightness - displayNightBrightness ) * ( sensorBrightnessAverage - sensorBrightnessNightLevel ) / ( sensorBrightnessDayLevel - sensorBrightnessNightLevel );
+    }
   }
 }
 
@@ -583,15 +613,20 @@ void setDisplayBrightness( bool isInit ) {
     updateDisplayBrightness = true;
     brightnessDiffSustainedMillis = 0;
   } else if( displayCurrentBrightnessInt != displayPreviousBrightnessInt ) {
-    if( ( displayCurrentBrightness > displayPreviousBrightness && ( displayCurrentBrightness > ( ceil( displayCurrentBrightness ) - 0.5 + SENSOR_BRIGHTNESS_LEVEL_HYSTERESIS ) ) ) ||
-        ( displayCurrentBrightness < displayPreviousBrightness && ( displayCurrentBrightness < ( floor(  displayCurrentBrightness ) + 0.5 - SENSOR_BRIGHTNESS_LEVEL_HYSTERESIS ) ) ) ) {
+    if( isEnergySavingMode ) {
       updateDisplayBrightness = true;
       brightnessDiffSustainedMillis = 0;
     } else {
-      brightnessDiffSustainedMillis += DELAY_SENSOR_BRIGHTNESS_UPDATE_CHECK;
-      if( brightnessDiffSustainedMillis >= SENSOR_BRIGHTNESS_SUSTAINED_LEVEL_HYSTERESIS_OVERRIDE_MILLIS ) {
+      if( ( displayCurrentBrightness > displayPreviousBrightness && ( displayCurrentBrightness > ( ceil( displayCurrentBrightness ) - 0.5 + SENSOR_BRIGHTNESS_LEVEL_HYSTERESIS ) ) ) ||
+          ( displayCurrentBrightness < displayPreviousBrightness && ( displayCurrentBrightness < ( floor(  displayCurrentBrightness ) + 0.5 - SENSOR_BRIGHTNESS_LEVEL_HYSTERESIS ) ) ) ) {
         updateDisplayBrightness = true;
         brightnessDiffSustainedMillis = 0;
+      } else {
+        brightnessDiffSustainedMillis += DELAY_SENSOR_BRIGHTNESS_UPDATE_CHECK;
+        if( brightnessDiffSustainedMillis >= SENSOR_BRIGHTNESS_SUSTAINED_LEVEL_HYSTERESIS_OVERRIDE_MILLIS ) {
+          updateDisplayBrightness = true;
+          brightnessDiffSustainedMillis = 0;
+        }
       }
     }
   } else {
@@ -987,7 +1022,7 @@ std::vector<std::vector<bool>> getDisplayPreview( String hourStrPreview, String 
       if( displayWidthUsed + charLpWidth + charWidth + charRpWidth > DISPLAY_WIDTH ) {
         charRpWidth = DISPLAY_WIDTH - displayWidthUsed - charLpWidth - charWidth;
       }
-      
+
       if( charWidth == 0 ) continue;
 
       for( uint8_t charX = 0; charX < charLpWidth; ++charX ) {
@@ -1035,16 +1070,44 @@ void renderDisplay() {
 }
 
 
+//power mode functions
+void powerModeProcessLoopTick( bool isInit ) {
+  #ifdef ESP8266
+
+  #else //ESP32 or ESP32S2
+  if( isInit ) {
+    isBatteryInstalled = digitalRead( BATTERY_PRESENT_PIN );
+    if( !isBatteryInstalled ) {
+      isEnergySavingMode = false;
+    }
+  }
+  if( isBatteryInstalled ) {
+    bool isEnergySavingModeCurrently = !digitalRead( BATTERY_POWERED_PIN );
+    isEnergySavingMode = isEnergySavingModeCurrently;
+  }
+  #endif
+}
+
+void initPowerModePin() {
+  #ifdef ESP8266
+
+  #else //ESP32 or ESP32S2
+  pinMode( BATTERY_PRESENT_PIN, INPUT_PULLDOWN );
+  pinMode( BATTERY_POWERED_PIN, INPUT_PULLDOWN );
+  #endif
+}
+
+
 //NTP functionality
 bool isTimeClientInitialised = false;
 unsigned long timeClientUpdatedMillis = 0;
 void initTimeClient() {
   if( WiFi.isConnected() && !isTimeClientInitialised ) {
     timeClient.setUpdateInterval( DELAY_NTP_TIME_SYNC );
-    Serial.print( F("Starting NTP client...") );
+    writeToSerial( F("Starting NTP client..."), false );
     timeClient.begin();
     isTimeClientInitialised = true;
-    Serial.println( F(" done") );
+    writeToSerial( F(" done"), true );
   }
 }
 
@@ -1066,12 +1129,12 @@ void ntpProcessLoopTick() {
 
         String hourStr, minuteStr, secondStr;
         calculateTimeToShow( hourStr, minuteStr, secondStr, isSingleDigitHourShown );
-        Serial.println( String( F("NTP time sync completed. Time: ") ) + hourStr + ":" + minuteStr + ":" + secondStr + "." + timeClient.getSubSeconds() );
+        writeToSerial( String( F("NTP time sync completed. Time: ") ) + hourStr + ":" + minuteStr + ":" + secondStr + "." + timeClient.getSubSeconds(), true );
 
         forceDisplaySync();
       } else if( ntpStatus == NTPClient::STATUS_FAILED_RESPONSE ) {
         timeClient.setUpdateInterval( DELAY_NTP_TIME_SYNC_RETRY );
-        Serial.println( F("NTP time sync error") );
+        writeToSerial( F("NTP time sync error"), true );
       }
       previousMillisNtpStatusCheck = currentMillis;
     }
@@ -1112,21 +1175,24 @@ const String getWiFiStatusText( wl_status_t status ) {
   }
 }
 
-void disconnectFromWiFi( bool erasePreviousCredentials ) {
+void disconnectFromWiFi( bool turnWiFiModuleOff, bool erasePreviousCredentials ) {
   wl_status_t wifiStatus = WiFi.status();
-  if( wifiStatus != WL_IDLE_STATUS ) {
-    Serial.print( String( F("Disconnecting from WiFi '") ) + WiFi.SSID() + String( F("'...") ) );
+  if( wifiStatus != WL_DISCONNECTED && wifiStatus != WL_IDLE_STATUS && wifiStatus != WL_NO_SHIELD ) {
+    writeToSerial( String( F("Disconnecting from WiFi '") ) + WiFi.SSID() + String( F("'...") ), false );
     uint8_t previousInternalLedStatus = getInternalLedStatus();
     setInternalLedStatus( HIGH );
-    WiFi.disconnect( false, erasePreviousCredentials );
-    delay( 10 );
-    while( true ) {
-      wifiStatus = WiFi.status();
-      if( wifiStatus != WL_CONNECTED ) break;
-      delay( 50 );
-      Serial.print( "." );
+    WiFi.disconnect( turnWiFiModuleOff, erasePreviousCredentials );
+    isWiFiRadioShutDown = turnWiFiModuleOff;
+    if( !turnWiFiModuleOff ) {
+      delay( 10 );
+      while( true ) {
+        wifiStatus = WiFi.status();
+        if( wifiStatus != WL_CONNECTED ) break;
+        delay( 50 );
+        writeToSerial( ".", false );
+      }
     }
-    Serial.println( F(" done") );
+    writeToSerial( F(" done"), true );
     setInternalLedStatus( previousInternalLedStatus );
   }
 }
@@ -1150,9 +1216,10 @@ void connectToWiFiAsync( bool isInit ) {
     return;
   }
 
-  Serial.println( String( F("Connecting to WiFi '") ) + String( wiFiClientSsid ) + "'..." );
+  writeToSerial( String( F("Connecting to WiFi '") ) + String( wiFiClientSsid ) + "'...", true );
   WiFi.hostname( getFullWiFiHostName().c_str() );
   WiFi.begin( wiFiClientSsid, wiFiClientPassword );
+  isWiFiRadioShutDown = false;
 
   if( WiFi.isConnected() ) {
     shutdownAccessPoint();
@@ -1161,12 +1228,12 @@ void connectToWiFiAsync( bool isInit ) {
 
   wl_status_t wifiStatus = WiFi.status();
   if( WiFi.isConnected() ) {
-    Serial.println( String( F("WiFi is connected. Status: ") ) + getWiFiStatusText( wifiStatus ) );
+    writeToSerial( String( F("WiFi is connected. Status: ") ) + getWiFiStatusText( wifiStatus ), true );
     shutdownAccessPoint();
     forceRefreshData();
   } else if( !isInit && ( wifiStatus == WL_NO_SSID_AVAIL || wifiStatus == WL_CONNECT_FAILED || wifiStatus == WL_CONNECTION_LOST || wifiStatus == WL_IDLE_STATUS || wifiStatus == WL_DISCONNECTED ) ) {
-    Serial.println( String( F("WiFi is NOT connected. Status: ") ) + getWiFiStatusText( wifiStatus ) );
-    disconnectFromWiFi( false );
+    writeToSerial( String( F("WiFi is NOT connected. Status: ") ) + getWiFiStatusText( wifiStatus ), true );
+    disconnectFromWiFi( false, false );
     createAccessPoint();
   }
 }
@@ -1178,9 +1245,10 @@ void connectToWiFiSync() {
     return;
   }
 
-  Serial.println( String( F("Connecting to WiFi '") ) + String( wiFiClientSsid ) + "'..." );
+  writeToSerial( String( F("Connecting to WiFi '") ) + String( wiFiClientSsid ) + "'...", true );
   WiFi.hostname( getFullWiFiHostName().c_str() );
   WiFi.begin( wiFiClientSsid, wiFiClientPassword );
+  isWiFiRadioShutDown = false;
 
   if( WiFi.isConnected() ) {
     shutdownAccessPoint();
@@ -1194,15 +1262,15 @@ void connectToWiFiSync() {
     delay( 500 );
     wl_status_t wifiStatus = WiFi.status();
     if( WiFi.isConnected() ) {
-      Serial.println( F(" done") );
+      writeToSerial( F(" done"), true );
       setInternalLedStatus( previousInternalLedStatus );
       shutdownAccessPoint();
       forceRefreshData();
       break;
     } else if( ( wifiStatus == WL_NO_SSID_AVAIL || wifiStatus == WL_CONNECT_FAILED || wifiStatus == WL_CONNECTION_LOST || wifiStatus == WL_IDLE_STATUS ) && ( calculateDiffMillis( wiFiConnectStartedMillis, millis() ) >= TIMEOUT_CONNECT_WIFI_SYNC ) ) {
-      Serial.println( String( F(" ERROR: ") ) + getWiFiStatusText( wifiStatus ) );
+      writeToSerial( String( F(" ERROR: ") ) + getWiFiStatusText( wifiStatus ), true );
       setInternalLedStatus( previousInternalLedStatus );
-      disconnectFromWiFi( false );
+      disconnectFromWiFi( false, false );
       createAccessPoint();
       break;
     }
@@ -1382,6 +1450,7 @@ const char* HTML_PAGE_BRIGHTNESS_DAY_NAME = "brtd";
 const char* HTML_PAGE_BRIGHTNESS_NIGHT_NAME = "brtn";
 const char* HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME = "brsd";
 const char* HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME = "brsn";
+const char* HTML_PAGE_BRIGHTNESS_STEEPNESS_NAME = "brst";
 const char* HTML_PAGE_DEVICE_NAME_NAME = "dvn";
 
 void handleWebServerGet() {
@@ -1396,7 +1465,7 @@ void handleWebServerGet() {
   wifiWebServer.sendContent( content );
   content = "";
 
-  //5200
+  //5300
   content += String( F(""
 "<script>"
   "let devnm=\"" ) ) + String( deviceName ) + String( F("\";"
@@ -1518,7 +1587,7 @@ void handleWebServerGet() {
       "ds:0,"
       "nb:0,"
       "db:0,"
-      "k:" ) ) + String( steepnessCoefficient ).c_str() + String( F(","
+      "k:0,"
       "smin:0,"
       "smax:0,"
       "bl:16"
@@ -1584,11 +1653,12 @@ void handleWebServerGet() {
     "},"
     "draw(isInit){"
       "let p=this.gp;"
-      "let brsd=document.getElementById(\"brsd\");"
-      "p.ns=parseInt(document.getElementById(\"brsn\").value);"
+      "let brsd=document.getElementById(\"") ) + HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME + String( F("\");"
+      "p.ns=parseInt(document.getElementById(\"") ) + HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME + String( F("\").value);"
       "p.ds=parseInt(brsd.value);"
-      "p.nb=parseInt(document.getElementById(\"brtn\").value);"
-      "p.db=parseInt(document.getElementById(\"brtd\").value);"
+      "p.nb=parseInt(document.getElementById(\"") ) + HTML_PAGE_BRIGHTNESS_NIGHT_NAME + String( F("\").value);"
+      "p.db=parseInt(document.getElementById(\"") ) + HTML_PAGE_BRIGHTNESS_DAY_NAME + String( F("\").value);"
+      "p.k=parseInt(document.getElementById(\"") ) + HTML_PAGE_BRIGHTNESS_STEEPNESS_NAME + String( F("\").value)*") ) + String(brightnessSteepnessCoefficientStep).c_str() + String( F(";"
       "p.smin=parseInt(brsd.min);"
       "p.smax=parseInt(brsd.max);"
       "if(isInit){"
@@ -1631,7 +1701,7 @@ void handleWebServerGet() {
   wifiWebServer.sendContent( content );
   content = "";
 
-  //4900
+  //5200
   content += String( F(""
 "<form method=\"POST\">"
   "<div class=\"fx fxsect\">"
@@ -1677,7 +1747,7 @@ void handleWebServerGet() {
     "</div>"
     "<div class=\"fxc\">"
       "<div class=\"fi\">") ) + getHtmlInput( F("Анімований годинник"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_CLOCK_ANIMATED_NAME, HTML_PAGE_CLOCK_ANIMATED_NAME, 0, 0, 0, false, isClockAnimated, "", "" ) + String( F("</div>"
-      "<div class=\"fi\">") ) + getHtmlInput( F("Вид анімації"), HTML_INPUT_RANGE, String(animationTypeNumber).c_str(), HTML_PAGE_ANIMATION_TYPE_NAME, HTML_PAGE_ANIMATION_TYPE_NAME, 1, TCData::NUMBER_OF_ANIMATIONS_SUPPORTED, 0, false, animationTypeNumber, "", String( F( "oninput=\"this.nextElementSibling.src='/data?p='+this.value;\"><img class=\"ap\" src=\"/data?p=" ) ) + String( animationTypeNumber ) + String( F( "\"" ) ) ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Вид анімації"), HTML_INPUT_RANGE, String(animationTypeNumber).c_str(), HTML_PAGE_ANIMATION_TYPE_NAME, HTML_PAGE_ANIMATION_TYPE_NAME, 1, TCData::NUMBER_OF_ANIMATIONS_SUPPORTED, 0, false, false, "", String( F( "oninput=\"this.nextElementSibling.src='/data?p='+this.value;\"><img class=\"ap\" src=\"/data?p=" ) ) + String( animationTypeNumber ) + String( F( "\"" ) ) ) + String( F("</div>"
     "</div>"
   "</div>"
   "<div class=\"fx fxsect\">"
@@ -1685,10 +1755,11 @@ void handleWebServerGet() {
       "Яскравість"
     "</div>"
     "<div class=\"fxc\">"
-      "<div class=\"fi\">") ) + getHtmlInput( F("Яскравість вдень"), HTML_INPUT_RANGE, String(displayDayBrightness).c_str(), HTML_PAGE_BRIGHTNESS_DAY_NAME, HTML_PAGE_BRIGHTNESS_DAY_NAME, 0, 15, 0, false, displayDayBrightness, "onchange=\"graph.draw();\"", "" ) + String( F("</div>"
-      "<div class=\"fi\">") ) + getHtmlInput( F("Яскравість вночі"), HTML_INPUT_RANGE, String(displayNightBrightness).c_str(), HTML_PAGE_BRIGHTNESS_NIGHT_NAME, HTML_PAGE_BRIGHTNESS_NIGHT_NAME, 0, 15, 0, false, displayNightBrightness, "onchange=\"graph.draw();\"", "" ) + String( F("</div>"
-      "<div class=\"fi\">") ) + getHtmlInput( F("Сенсор яскравості (день)"), HTML_INPUT_RANGE, String(sensorBrightnessDayLevel).c_str(), HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME, HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME, 0, ADC_NUMBER_OF_VALUES - 1, ADC_STEP_FOR_BYTE, false, sensorBrightnessDayLevel, "onchange=\"graph.draw();\"", "" ) + String( F("</div>"
-      "<div class=\"fi\">") ) + getHtmlInput( F("Сенсор яскравості (ніч)"), HTML_INPUT_RANGE, String(sensorBrightnessNightLevel).c_str(), HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME, HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME, 0, ADC_NUMBER_OF_VALUES - 1, ADC_STEP_FOR_BYTE, false, sensorBrightnessNightLevel, "onchange=\"graph.draw();\"", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Яскравість вдень"), HTML_INPUT_RANGE, String(displayDayBrightness).c_str(), HTML_PAGE_BRIGHTNESS_DAY_NAME, HTML_PAGE_BRIGHTNESS_DAY_NAME, 0, 15, 0, false, false, "onchange=\"graph.draw();\"", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Яскравість вночі"), HTML_INPUT_RANGE, String(displayNightBrightness).c_str(), HTML_PAGE_BRIGHTNESS_NIGHT_NAME, HTML_PAGE_BRIGHTNESS_NIGHT_NAME, 0, 15, 0, false, false, "onchange=\"graph.draw();\"", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Сенсор яскравості (день)"), HTML_INPUT_RANGE, String(sensorBrightnessDayLevel).c_str(), HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME, HTML_PAGE_BRIGHTNESS_DAY_SENSOR_NAME, 0, ADC_NUMBER_OF_VALUES - 1, ADC_STEP_FOR_BYTE, false, false, "onchange=\"graph.draw();\"", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Сенсор яскравості (ніч)"), HTML_INPUT_RANGE, String(sensorBrightnessNightLevel).c_str(), HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME, HTML_PAGE_BRIGHTNESS_NIGHT_SENSOR_NAME, 0, ADC_NUMBER_OF_VALUES - 1, ADC_STEP_FOR_BYTE, false, false, "onchange=\"graph.draw();\"", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Крутизна залежності"), HTML_INPUT_RANGE, String(brightnessSteepnessCoefficient).c_str(), HTML_PAGE_BRIGHTNESS_STEEPNESS_NAME, HTML_PAGE_BRIGHTNESS_STEEPNESS_NAME, 0, 255, 1, false, false, "onchange=\"graph.draw();\"", String( F( "oninput=\"this.nextElementSibling.value=(this.value*" ) ) + String(brightnessSteepnessCoefficientStep) + String( F( ").toFixed(2);\"><output>" ) ) + String(brightnessSteepnessCoefficient*brightnessSteepnessCoefficientStep).c_str() + String( F( "</output" ) ) ) + String( F("</div>"
       "<div class=\"fi fv\">"
         "<div class=\"fi ex\"><div class=\"ex ext extfwon\" onclick=\"ex(this);mnt(2);\">Графік (сенсор &rarr; яскравість)</div></div>"
         "<div class=\"fi ex exc\"><div class=\"fi\"><div id=\"gc\"><div id=\"gw\"><div id=\"gr\"></div><div id=\"yg\"></div><div id=\"xg\"></div></div></div></div></div>"
@@ -1700,8 +1771,8 @@ void handleWebServerGet() {
       "Інші налаштування"
     "</div>"
     "<div class=\"fxc\">"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Розвернути зображення на 180°"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_ROTATE_DISPLAY_NAME, HTML_PAGE_ROTATE_DISPLAY_NAME, 0, 0, 0, false, isRotateDisplay, "onchange=\"rt();\"", "" ) + String( F("</div>"
       "<div class=\"fi\">") ) + getHtmlInput( F("Назва пристрою"), HTML_INPUT_TEXT, deviceName, HTML_PAGE_DEVICE_NAME_NAME, HTML_PAGE_DEVICE_NAME_NAME, 0, sizeof(deviceName) - 1, 0, false, false, "", "" ) + String( F("</div>"
-      "<div class=\"fi\">") ) + getHtmlInput( F("Розвернути зображення на 180°"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_ROTATE_DISPLAY_NAME, HTML_PAGE_ROTATE_DISPLAY_NAME, 0, 0, 0, false, isRotateDisplay, "", "" ) + String( F("</div>"
     "</div>"
   "</div>"
   "<div class=\"fx fxsect\">"
@@ -1936,6 +2007,13 @@ void handleWebServerPost() {
     }
   }
 
+  String htmlPageSensorBrightnessSteepnessReceived = wifiWebServer.arg( HTML_PAGE_BRIGHTNESS_STEEPNESS_NAME );
+  uint sensorBrightnessSteepnessReceived = htmlPageSensorBrightnessSteepnessReceived.toInt();
+  bool sensorBrightnessSteepnessReceivedPopulated = false;
+  if( sensorBrightnessSteepnessReceived >= 0 && sensorBrightnessSteepnessReceived <= 255 ) {
+    sensorBrightnessSteepnessReceivedPopulated = true;
+  }
+
   String htmlPageDeviceNameReceived = wifiWebServer.arg( HTML_PAGE_DEVICE_NAME_NAME );
 
 
@@ -1951,20 +2029,20 @@ void handleWebServerPost() {
   if( isSingleDigitHourShownReceivedPopulated && isSingleDigitHourShownReceived != isSingleDigitHourShown ) {
     isSingleDigitHourShown = isSingleDigitHourShownReceived;
     isDisplayRerenderRequiredAfterSettingChanged = true;
-    Serial.println( F("Show single digit hour updated") );
+    writeToSerial( F("Show single digit hour updated"), true );
     writeEepromBoolValue( eepromIsSingleDigitHourShownIndex, isSingleDigitHourShownReceived );
   }
 
   if( isCompactLayoutReceivedPopulated && isCompactLayoutReceived != isDisplayCompactLayoutUsed ) {
     isDisplayCompactLayoutUsed = isCompactLayoutReceived;
     isDisplayRerenderRequiredAfterSettingChanged = true;
-    Serial.println( F("Compact layout updated") );
+    writeToSerial( F("Compact layout updated"), true );
     writeEepromBoolValue( eepromIsCompactLayoutShownIndex, isCompactLayoutReceived );
   }
 
   if( isClockAnimatedReceivedPopulated && isClockAnimatedReceived != isClockAnimated ) {
     isClockAnimated = isClockAnimatedReceived;
-    Serial.println( F("Clock animated updated") );
+    writeToSerial( F("Clock animated updated"), true );
     writeEepromBoolValue( eepromIsClockAnimatedIndex, isClockAnimatedReceived );
   }
 
@@ -1972,41 +2050,41 @@ void handleWebServerPost() {
   if( displayFontTypeNumberReceivedPopulated && displayFontTypeNumberReceived != displayFontTypeNumber ) {
     displayFontTypeNumber = displayFontTypeNumberReceived;
     isDisplayRerenderRequiredAfterSettingChanged = true;
-    Serial.println( F("Display font updated") );
+    writeToSerial( F("Display font updated"), true );
     writeEepromUintValue( eepromDisplayFontTypeNumberIndex, displayFontTypeNumberReceived );
   }
 
   if( isDisplayBoldFondUsedReceivedPopulated && isDisplayBoldFondUsedReceived != isDisplayBoldFontUsed ) {
     isDisplayBoldFontUsed = isDisplayBoldFondUsedReceived;
     isDisplayRerenderRequiredAfterSettingChanged = true;
-    Serial.println( F("Show seconds updated") );
+    writeToSerial( F("Show seconds updated"), true );
     writeEepromBoolValue( eepromIsFontBoldUsedIndex, isDisplayBoldFondUsedReceived );
   }
 
   if( isDisplaySecondsShownReceivedPopulated && isDisplaySecondsShownReceived != isDisplaySecondsShown ) {
     isDisplaySecondsShown = isDisplaySecondsShownReceived;
     isDisplayRerenderRequiredAfterSettingChanged = true;
-    Serial.println( F("Show seconds updated") );
+    writeToSerial( F("Show seconds updated"), true );
     writeEepromBoolValue( eepromIsDisplaySecondsShownIndex, isDisplaySecondsShownReceived );
   }
 
   if( isRotateDisplayReceivedPopulated && isRotateDisplayReceived != isRotateDisplay ) {
     isRotateDisplay = isRotateDisplayReceived;
     isDisplayRerenderRequiredAfterSettingChanged = true;
-    Serial.println( F("Display rotation updated") );
+    writeToSerial( F("Display rotation updated"), true );
     writeEepromBoolValue( eepromIsRotateDisplayIndex, isRotateDisplayReceived );
   }
 
   if( animationTypeNumberReceivedPopulated && animationTypeNumberReceived != animationTypeNumber ) {
     animationTypeNumber = animationTypeNumberReceived;
-    Serial.println( F("Display animation updated") );
+    writeToSerial( F("Display animation updated"), true );
     writeEepromUintValue( eepromAnimationTypeNumberIndex, animationTypeNumberReceived );
   }
 
   if( isSlowSemicolonAnimationReceivedPopulated && isSlowSemicolonAnimationReceived != isSlowSemicolonAnimation ) {
     isSlowSemicolonAnimation = isSlowSemicolonAnimationReceived;
     isDisplayRerenderRequiredAfterSettingChanged = true;
-    Serial.println( F("Display semicolon speed updated") );
+    writeToSerial( F("Display semicolon speed updated"), true );
     writeEepromBoolValue( eepromIsSlowSemicolonAnimationIndex, isSlowSemicolonAnimationReceived );
     forceDisplaySync();
   }
@@ -2015,7 +2093,7 @@ void handleWebServerPost() {
     displayDayBrightness = displayDayBrightnessReceived;
     isDisplayIntensityUpdateRequiredAfterSettingChanged = true;
     isDisplayRerenderRequiredAfterSettingChanged = true;
-    Serial.println( F("Display brightness updated") );
+    writeToSerial( F("Display brightness updated"), true );
     writeEepromUintValue( eepromDisplayDayBrightnessIndex, displayDayBrightnessReceived );
   }
 
@@ -2023,7 +2101,7 @@ void handleWebServerPost() {
     displayNightBrightness = displayNightBrightnessReceived;
     isDisplayIntensityUpdateRequiredAfterSettingChanged = true;
     isDisplayRerenderRequiredAfterSettingChanged = true;
-    Serial.println( F("Display night mode brightness updated") );
+    writeToSerial( F("Display night mode brightness updated"), true );
     writeEepromUintValue( eepromDisplayNightBrightnessIndex, displayNightBrightnessReceived );
   }
 
@@ -2031,7 +2109,7 @@ void handleWebServerPost() {
     sensorBrightnessDayLevel = sensorBrightnessDayReceived;
     isDisplayIntensityUpdateRequiredAfterSettingChanged = true;
     isDisplayRerenderRequiredAfterSettingChanged = true;
-    Serial.println( F("Sensor day brightness level updated") );
+    writeToSerial( F("Sensor day brightness level updated"), true );
     writeEepromUintValue( eepromSensorBrightnessDayLevelIndex, (uint8_t)( sensorBrightnessDayReceived / ADC_STEP_FOR_BYTE ) );
   }
 
@@ -2039,19 +2117,27 @@ void handleWebServerPost() {
     sensorBrightnessNightLevel = sensorBrightnessNightReceived;
     isDisplayIntensityUpdateRequiredAfterSettingChanged = true;
     isDisplayRerenderRequiredAfterSettingChanged = true;
-    Serial.println( F("Sensor night brightness level updated") );
+    writeToSerial( F("Sensor night brightness level updated"), true );
     writeEepromUintValue( eepromSensorBrightnessNightLevelIndex, (uint8_t)( sensorBrightnessNightReceived / ADC_STEP_FOR_BYTE ) );
   }
 
+  if( sensorBrightnessSteepnessReceivedPopulated && sensorBrightnessSteepnessReceived != brightnessSteepnessCoefficient ) {
+    brightnessSteepnessCoefficient = sensorBrightnessSteepnessReceived;
+    isDisplayIntensityUpdateRequiredAfterSettingChanged = true;
+    isDisplayRerenderRequiredAfterSettingChanged = true;
+    writeToSerial( F("Brightness steepness coefficient updated"), true );
+    writeEepromUintValue( eepromBrightnessSteepnessCoefficientIndex, sensorBrightnessSteepnessReceived );
+  }
+
   if( strcmp( deviceName, htmlPageDeviceNameReceived.c_str() ) != 0 ) {
-    Serial.println( F("Device name updated") );
+    writeToSerial( F("Device name updated"), true );
     strncpy( deviceName, htmlPageDeviceNameReceived.c_str(), sizeof(deviceName) );
     writeEepromCharArray( eepromDeviceNameIndex, deviceName, sizeof(deviceName) );
   }
 
 
   if( isWiFiChanged ) {
-    Serial.println( F("WiFi settings updated") );
+    writeToSerial( F("WiFi settings updated"), true );
     strncpy( wiFiClientSsid, htmlPageSsidNameReceived.c_str(), sizeof(wiFiClientSsid) );
     writeEepromCharArray( eepromWiFiSsidIndex, wiFiClientSsid, sizeof(wiFiClientSsid) );
     strncpy( wiFiClientPassword, htmlPageSsidPasswordReceived.c_str(), sizeof(wiFiClientPassword) );
@@ -2349,6 +2435,14 @@ void handleWebServerGetMonitor() {
       "\t\t\"req\": ") ) + String( displayCurrentBrightness ) + String( F(",\n"
       "\t\t\"dsp\": ") ) + String( static_cast<uint8_t>( round( displayPreviousBrightness ) ) ) + String( F("\n"
     "\t},\n"
+    #ifdef ESP8266
+
+    #else //ESP32 or ESP32S2
+    "\t\"bat\": {\n"
+      "\t\t\"present\": ") ) + String( isBatteryInstalled ? "true" : "false" ) + String( F(",\n"
+      "\t\t\"used\": ") ) + String( isEnergySavingMode ? "true" : "false" ) + String( F("\n"
+    "\t},\n"
+    #endif
     "\t\"ram\": {\n"
       "\t\t\"heap\": ") ) + String( ESP.getFreeHeap() );
       #ifdef ESP8266
@@ -2763,10 +2857,10 @@ void stopWebServer() {
 
 void startWebServer() {
   if( isWebServerInitialized ) return;
-  Serial.print( F("Starting web server...") );
+  writeToSerial( F("Starting web server..."), false );
   wifiWebServer.begin();
   isWebServerInitialized = true;
-  Serial.println( " done" );
+  writeToSerial( " done", true );
 }
 
 void configureWebServer() {
@@ -2795,13 +2889,13 @@ void configureWebServer() {
 #ifdef ESP8266
 WiFiEventHandler wiFiEventHandler;
 void onWiFiConnected( const WiFiEventStationModeConnected& event ) {
-  Serial.println( String( F("WiFi is connected to '") ) + String( event.ssid ) + String ( F("'") ) );
+  writeToSerial( String( F("WiFi is connected to '") ) + String( event.ssid ) + String ( F("'") ), true );
 }
 #else //ESP32 or ESP32S2
 void WiFiEvent( WiFiEvent_t event ) {
   switch( event ) {
     case SYSTEM_EVENT_STA_GOT_IP:
-      Serial.println( String( F("WiFi is connected to '") ) + String( WiFi.SSID() ) + String ( F("' with IP ") ) + WiFi.localIP().toString() );
+      writeToSerial( String( F("WiFi is connected to '") ) + String( WiFi.SSID() ) + String ( F("' with IP ") ) + WiFi.localIP().toString(), true );
       break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
       //
@@ -2818,9 +2912,11 @@ void setup() {
   initInternalLed();
   initDisplayPhase1();
 
+  initPowerModePin();
+
   Serial.begin( 115200 );
-  Serial.println();
-  Serial.println( String( F("Clock by Dmytro Kurylo. V@") ) + getFirmwareVersion() + String( F(" CPU@") ) + String( ESP.getCpuFreqMHz() ) );
+  writeToSerial( "", true );
+  writeToSerial( String( F("Clock by Dmytro Kurylo. V@") ) + getFirmwareVersion() + String( F(" CPU@") ) + String( ESP.getCpuFreqMHz() ), true );
 
   #ifdef ESP8266
 
@@ -2872,19 +2968,31 @@ void loop() {
   }
   wifiWebServer.handleClient();
 
+  powerModeProcessLoopTick( isFirstLoopRun );
   brightnessProcessLoopTick();
+
+  bool isWiFiShutdown = isEnergySavingMode && isRouterSsidProvided() && timeCanBeCalculated();
+  if( isWiFiShutdown ) {
+    shutdownAccessPoint();
+    disconnectFromWiFi( true, false );
+  }
 
   currentMillis = millis();
   if( isApInitialized && isRouterSsidProvided() && ( calculateDiffMillis( apStartedMillis, currentMillis ) >= TIMEOUT_AP ) ) {
-    shutdownAccessPoint();
-    connectToWiFiAsync( true );
+    if( !isWiFiShutdown ) {
+      shutdownAccessPoint();
+      connectToWiFiAsync( true );
+    }
     previousMillisWiFiStatusCheck = currentMillis;
   }
 
-  if( /*isFirstLoopRun || */( calculateDiffMillis( previousMillisWiFiStatusCheck, currentMillis ) >= DELAY_WIFI_CONNECTION_CHECK ) ) {
-    if( !WiFi.isConnected() ) {
-      if( !isApInitialized ) {
-        connectToWiFiAsync( false );
+  bool isWiFiStatusCheck = calculateDiffMillis( previousMillisWiFiStatusCheck, currentMillis ) >= DELAY_WIFI_CONNECTION_CHECK;
+  if( /*isFirstLoopRun || */isWiFiStatusCheck || WiFi.status() == WL_NO_SHIELD ) {
+    if( !isWiFiShutdown ) {
+      if( !WiFi.isConnected() ) {
+        if( !isApInitialized ) {
+          connectToWiFiAsync( isWiFiRadioShutDown ? true : false );
+        }
       }
     }
     previousMillisWiFiStatusCheck = currentMillis;
@@ -2935,5 +3043,16 @@ void loop() {
   }
 
   isFirstLoopRun = false;
+
+  #ifdef ESP8266
   delay(2); //https://www.tablix.org/~avian/blog/archives/2022/08/saving_power_on_an_esp8266_web_server_using_delays/
+  #else //ESP32 or ESP32S2
+  if( isEnergySavingMode && isWiFiShutdown && WiFi.status() == WL_NO_SHIELD ) {
+    Serial.flush();
+    esp_sleep_enable_timer_wakeup(50 * 1000); //light sleep for 50 milliseconds
+    esp_light_sleep_start();
+  } else {
+    delay(2); //https://www.tablix.org/~avian/blog/archives/2022/08/saving_power_on_an_esp8266_web_server_using_delays/
+  }
+  #endif
 }
