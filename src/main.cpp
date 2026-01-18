@@ -1709,8 +1709,8 @@ void handleWebServerGet() {
       "Приєднатись до WiFi"
     "</div>"
     "<div class=\"fxc\">"
-      "<div class=\"fi\">") ) + getHtmlInput( F("SSID назва"), HTML_INPUT_TEXT, wiFiClientSsid, HTML_PAGE_WIFI_SSID_NAME, HTML_PAGE_WIFI_SSID_NAME, 0, sizeof(wiFiClientSsid) - 1, 0, true, false, "", "" ) + String( F("</div>"
-      "<div class=\"fi\">") ) + getHtmlInput( F("SSID пароль"), HTML_INPUT_PASSWORD, wiFiClientPassword, HTML_PAGE_WIFI_PWD_NAME, HTML_PAGE_WIFI_PWD_NAME, 0, sizeof(wiFiClientPassword) - 1, 0, true, false, "", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("SSID назва"), HTML_INPUT_TEXT, wiFiClientSsid, HTML_PAGE_WIFI_SSID_NAME, HTML_PAGE_WIFI_SSID_NAME, 0, sizeof(wiFiClientSsid) - 1, 0, false, false, "", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("SSID пароль"), HTML_INPUT_PASSWORD, wiFiClientPassword, HTML_PAGE_WIFI_PWD_NAME, HTML_PAGE_WIFI_PWD_NAME, 0, sizeof(wiFiClientPassword) - 1, 0, false, false, "", "" ) + String( F("</div>"
     "</div>"
   "</div>"
   "<div class=\"fx fxsect\">"
@@ -1863,6 +1863,10 @@ void handleWebServerPost() {
   String htmlPageSsidNameReceived = wifiWebServer.arg( HTML_PAGE_WIFI_SSID_NAME );
   String htmlPageSsidPasswordReceived = wifiWebServer.arg( HTML_PAGE_WIFI_PWD_NAME );
 
+  if( htmlPageSsidNameReceived.length() == 0 || htmlPageSsidPasswordReceived.length() == 0 ) {
+    htmlPageSsidNameReceived = "";
+    htmlPageSsidPasswordReceived = "";
+  }
   if( htmlPageSsidNameReceived.length() > sizeof(wiFiClientSsid) - 1 ) {
     addHtmlPageStart( content );
     content += String( F("<h2>Error: SSID Name exceeds maximum length of ") ) + String( sizeof(wiFiClientSsid) - 1 ) + String( F("</h2>") );
@@ -2860,7 +2864,7 @@ void startWebServer() {
   writeToSerial( F("Starting web server..."), false );
   wifiWebServer.begin();
   isWebServerInitialized = true;
-  writeToSerial( " done", true );
+  writeToSerial( F(" done"), true );
 }
 
 void configureWebServer() {
