@@ -272,6 +272,25 @@ File getFileFromFlash( String fileName ) {
   return file;
 }
 
+void sanitizeTextAscii( const String &input, char* outDeviceName, size_t maxBytes ) {
+    String v = input;
+    while(v.length() && (v[0] == ' ' || v[0] == '-')) v.remove(0,1); //Remove leading spaces/hyphens
+    while(v.length() && v[v.length() - 1] == ' ') v.remove(v.length() - 1, 1); //Remove trailing spaces
+
+    size_t bytesUsed = 0;
+    String sanitizedValue = "";
+    for( size_t i = 0; i < v.length(); i++ ) {
+        char ch = v[i];
+        if( ( ch >= 32 && ch <= 127 ) && ( isalnum(ch) || ch == ' ' || ch == '_' || ch == '-' ) ) {
+            if( bytesUsed + 1 > maxBytes ) break;
+            sanitizedValue += ch;
+            bytesUsed += 1;
+        }
+    }
+    strncpy( outDeviceName, sanitizedValue.c_str(), maxBytes );
+    outDeviceName[maxBytes] = '\0';
+}
+
 
 //eeprom functionality
 const uint16_t eepromFlashDataVersionIndex = 0;
@@ -408,7 +427,13 @@ void loadEepromData() {
 
     readEepromCharArray( eepromWiFiSsidIndex, wiFiClientSsid, sizeof(wiFiClientSsid), true );
     readEepromCharArray( eepromWiFiPasswordIndex, wiFiClientPassword, sizeof(wiFiClientPassword), true );
-    readEepromCharArray( eepromDeviceNameIndex, deviceName, sizeof(deviceName), true );
+    char deviceNameReceived[sizeof(deviceName)];
+    char deviceNameSanitized[sizeof(deviceName)];
+    readEepromCharArray( eepromDeviceNameIndex, deviceNameReceived, sizeof(deviceNameReceived), true );
+    deviceNameReceived[sizeof(deviceNameReceived) - 1] = '\0';
+    sanitizeTextAscii( String(deviceNameReceived), deviceNameSanitized, sizeof(deviceNameSanitized) - 1 );
+    strncpy(deviceName, deviceNameSanitized, sizeof(deviceNameSanitized) - 1);
+    deviceName[sizeof(deviceName) - 1] = '\0';
     readEepromUintValue( eepromDisplayFontTypeNumberIndex, displayFontTypeNumber, true );
     if( displayFontTypeNumber < 1 || displayFontTypeNumber > TCFonts::NUMBER_OF_FONTS_SUPPORTED ) displayFontTypeNumber = 1;
     readEepromBoolValue( eepromIsFontBoldUsedIndex, isDisplayBoldFontUsed, true );
@@ -463,9 +488,31 @@ void loadEepromData() {
 }
 
 
+String getFullWiFiSsidName() {
+  String fullName = getWiFiAccessPointSsid();
+  if( strlen(deviceName) > 0 ) {
+    fullName += " - ";
+    fullName += deviceName;
+  } else {
+  #ifdef ESP8266
+  fullName += " - " + String( ESP.getChipId() );
+  #else //ESP32 or ESP32S2
+  String macAddress = String( ESP.getEfuseMac() );
+  fullName += " - " + macAddress.substring( macAddress.length() - 4 );
+  #endif
+  }
+  size_t maxLen = sizeof(wiFiClientSsid) - 1;
+  if( fullName.length() > maxLen ) {
+    fullName = fullName.substring( 0, maxLen );
+  }
+  return fullName;
+}
+
+
 //wifi connection as AP
 bool isApInitialized = false;
 unsigned long apStartedMillis;
+
 
 void createAccessPoint() {
   if( isApInitialized ) return;
@@ -475,10 +522,10 @@ void createAccessPoint() {
   WiFi.softAPConfig( getWiFiAccessPointIp(), getWiFiAccessPointIp(), getWiFiAccessPointNetMask() );
 
   #ifdef ESP8266
-  WiFi.softAP( ( String( getWiFiAccessPointSsid() ) + " " + String( ESP.getChipId() ) ).c_str(), getWiFiAccessPointPassword(), 0, false );
+  WiFi.softAP( getFullWiFiSsidName().c_str(), getWiFiAccessPointPassword(), 0, false );
   #else //ESP32 or ESP32S2
   String macAddress = String( ESP.getEfuseMac() );
-  WiFi.softAP( ( String( getWiFiAccessPointSsid() ) + " " + macAddress.substring( macAddress.length() - 4 ) ).c_str(), getWiFiAccessPointPassword(), 0, false );
+  WiFi.softAP( getFullWiFiSsidName().c_str(), getWiFiAccessPointPassword(), 0, false );
   #endif
   isWiFiRadioShutDown = false;
   IPAddress accessPointIp = WiFi.softAPIP();
@@ -1063,6 +1110,7 @@ void renderDisplay() {
     String hourStr, minuteStr, secondStr;
     calculateTimeToShow( hourStr, minuteStr, secondStr, isSingleDigitHourShown );
     renderDisplayText( hourStr, minuteStr, secondStr, isClockAnimated );
+
   } else {
     renderDisplayText( "  ", "  ", "  ", false );
   }
@@ -1202,12 +1250,23 @@ bool isRouterSsidProvided() {
 }
 
 String getFullWiFiHostName() {
+  String fullName = getWiFiHostName();
+  if( strlen(deviceName) > 0 ) {
+    fullName += " - ";
+    fullName += deviceName;
+  } else {
   #ifdef ESP8266
-  return String( getWiFiHostName() ) + "-" + String( ESP.getChipId() );
+  fullName += " - " + String( ESP.getChipId() );
   #else //ESP32 or ESP32S2
   String macAddress = String( ESP.getEfuseMac() );
-  return String( getWiFiHostName() ) + "-" + macAddress.substring( macAddress.length() - 4 );
+  fullName += " - " + macAddress.substring( macAddress.length() - 4 );
   #endif
+  }
+  size_t maxLen = sizeof(wiFiClientSsid) - 1;
+  if( fullName.length() > maxLen ) {
+    fullName = fullName.substring( 0, maxLen );
+  }
+  return fullName;
 }
 
 void connectToWiFiAsync( bool isInit ) {
@@ -1458,15 +1517,15 @@ void handleWebServerGet() {
   wifiWebServer.send( 200, getContentType( F("html") ), "" );
 
   String content;
-  content.reserve( 6000 ); //currently 5600 max (when sending Html Page Start)
+  content.reserve( 6000 );
 
   //5600
   addHtmlPageStart( content );
   wifiWebServer.sendContent( content );
   content = "";
 
-  //5300
-  content += String( F(""
+  //5700
+  content += String( F(
 "<script>"
   "let devnm=\"" ) ) + String( deviceName ) + String( F("\";"
   "let ap=" ) ) + String( isApInitialized ) + String( F(";"
@@ -1697,12 +1756,35 @@ void handleWebServerGet() {
       "ell.textContent=Math.round(p.cv);"
     "}"
   "};" //graph end
-"</script>" ) );
+  "function sanitize(i){"
+    "let v=i.value,nv='',b=0,max=i.maxLength,c=i.selectionStart,nc=c;"
+    "while(v.startsWith(' ')||v.startsWith('-')){"
+      "v=v.slice(1);"
+      "if(c>0){nc--;}"
+    "}"
+    "while(v.endsWith(' ')){"
+      "v=v.slice(0,-1);"
+      "if(nc>v.length){nc=v.length;}"
+    "}"
+    "for(let j=0;j<v.length;j++){"
+      "if(/^[A-Za-z0-9 _-]$/.test(v[j])){"
+        "if(max>0&&b+1>max){break;}"
+        "nv+=v[j];"
+        "b++;"
+      "}else if(j<nc){"
+        "nc--;"
+      "}"
+    "}"
+    "i.value=nv;"
+    "i.setSelectionRange(nc,nc);"
+  "}"
+"</script>"
+  ) );
   wifiWebServer.sendContent( content );
   content = "";
 
   //5200
-  content += String( F(""
+  content += String( F(
 "<form method=\"POST\">"
   "<div class=\"fx fxsect\">"
     "<div class=\"fxh\">"
@@ -1772,7 +1854,7 @@ void handleWebServerGet() {
     "</div>"
     "<div class=\"fxc\">"
       "<div class=\"fi\">") ) + getHtmlInput( F("Розвернути зображення на 180°"), HTML_INPUT_CHECKBOX, "", HTML_PAGE_ROTATE_DISPLAY_NAME, HTML_PAGE_ROTATE_DISPLAY_NAME, 0, 0, 0, false, isRotateDisplay, "onchange=\"rt();\"", "" ) + String( F("</div>"
-      "<div class=\"fi\">") ) + getHtmlInput( F("Назва пристрою"), HTML_INPUT_TEXT, deviceName, HTML_PAGE_DEVICE_NAME_NAME, HTML_PAGE_DEVICE_NAME_NAME, 0, sizeof(deviceName) - 1, 0, false, false, "", "" ) + String( F("</div>"
+      "<div class=\"fi\">") ) + getHtmlInput( F("Назва пристрою"), HTML_INPUT_TEXT, deviceName, HTML_PAGE_DEVICE_NAME_NAME, HTML_PAGE_DEVICE_NAME_NAME, 0, sizeof(deviceName) - 1, 0, false, false, "oninput=\"sanitize(this);\"", "" ) + String( F("</div>"
     "</div>"
   "</div>"
   "<div class=\"fx fxsect\">"
@@ -1807,7 +1889,8 @@ void handleWebServerGet() {
       "<span>DSP <span id=\"b_dsp\"></span></span>"
     "</div>"
   "</span>"
-"</div>") );
+"</div>"
+  ) );
   addHtmlPageEnd( content );
   wifiWebServer.sendContent( content );
   content = "";
@@ -2018,7 +2101,9 @@ void handleWebServerPost() {
     sensorBrightnessSteepnessReceivedPopulated = true;
   }
 
+  char sanitizedDeviceNameReceived[sizeof(deviceName)];
   String htmlPageDeviceNameReceived = wifiWebServer.arg( HTML_PAGE_DEVICE_NAME_NAME );
+  sanitizeTextAscii( htmlPageDeviceNameReceived, sanitizedDeviceNameReceived, sizeof(deviceName) - 1 );
 
 
   bool isWiFiChanged = strcmp( wiFiClientSsid, htmlPageSsidNameReceived.c_str() ) != 0 || strcmp( wiFiClientPassword, htmlPageSsidPasswordReceived.c_str() ) != 0;
@@ -2133,9 +2218,10 @@ void handleWebServerPost() {
     writeEepromUintValue( eepromBrightnessSteepnessCoefficientIndex, sensorBrightnessSteepnessReceived );
   }
 
-  if( strcmp( deviceName, htmlPageDeviceNameReceived.c_str() ) != 0 ) {
+  if( strcmp( deviceName, sanitizedDeviceNameReceived ) != 0 ) {
     writeToSerial( F("Device name updated"), true );
-    strncpy( deviceName, htmlPageDeviceNameReceived.c_str(), sizeof(deviceName) );
+    strncpy( deviceName, sanitizedDeviceNameReceived, sizeof(deviceName) );
+    deviceName[sizeof(deviceName) - 1] = '\0';
     writeEepromCharArray( eepromDeviceNameIndex, deviceName, sizeof(deviceName) );
   }
 
@@ -2502,7 +2588,7 @@ void handleWebServerGetFontEditor() {
   wifiWebServer.send( 200, getContentType( F("html") ), "" );
 
   String content;
-  content.reserve( 6000 ); //currently 5600 max (when sending Html Page Start)
+  content.reserve( 6000 );
 
   //5600
   addHtmlPageStart( content );
@@ -2510,7 +2596,8 @@ void handleWebServerGetFontEditor() {
   content = "";
 
   //3500
-  content += String( F("<style>"
+  content += String( F(
+  "<style>"
     ".wrp{width:96vw;min-width:none;max-width:none;}"
     ".fw{font-size:1vw;user-select:none;}"
     ".hlw,.slw{display:flex;margin-top:10px;gap:10px;}"
@@ -2581,12 +2668,13 @@ void handleWebServerGetFontEditor() {
           "px.classList.toggle('px_off');"
         "});"
       "});"
-    "});" ) );
+    "});"
+  ) );
   wifiWebServer.sendContent( content );
   content = "";
 
   //3700
-  content += String( F(""
+  content += String( F(
     "const createDom=(()=>{"
       "let dom='<div class=\"fw\"><div class=\"hlw\"><div></div>'+getHeadersDom()+'</div>';"
       "symbols.forEach(s=>{"
@@ -2746,7 +2834,8 @@ void handleWebServerGetFontEditor() {
         "<span class=\"sub\"><a href=\"/\">Назад</a></span>"
       "</span>"
     "</div>"
-  "</div>") );
+  "</div>"
+  ) );
   addHtmlPageEnd( content );
   wifiWebServer.sendContent( content );
   content = "";
