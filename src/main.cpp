@@ -120,28 +120,23 @@ char wiFiClientSsid[32 + 1];
 char wiFiClientPassword[32 + 1];
 
 uint8_t displayFontTypeNumber = 1;
-bool isDisplayBoldFontUsed = true;
+bool isDisplayBoldFontUsed = false;
 bool isDisplayCompactLayoutUsed = false;
 bool isDisplaySecondsShown = false;
 uint8_t displayDayBrightness = 9;
-uint8_t displayNightBrightness = 1;
+uint8_t displayNightBrightness = 0;
 bool isForceDisplaySync = true;
 bool isForceDisplaySyncDisplayRenderOverride = false;
-bool isSingleDigitHourShown = false;
+bool isSingleDigitHourShown = true;
 bool isRotateDisplay = false;
 bool isClockAnimated = false;
 uint8_t animationTypeNumber = 1;
-uint8_t brightnessSteepnessCoefficient = 40;
+uint8_t brightnessSteepnessCoefficient = 72;
 float brightnessSteepnessCoefficientStep = 0.05;
 
 //brightness settings
-#ifdef ESP8266
-uint16_t sensorBrightnessNightLevel = 8; //ESP8266 has 10-bit ADC (0-1023)
-uint16_t sensorBrightnessDayLevel = 512; //ESP8266 has 10-bit ADC (0-1023)
-#else //ESP32 or ESP32S2
-uint16_t sensorBrightnessNightLevel = 32; //ESP32 has 12-bit ADC (0-4095); ESP32-S2 has 13-bit ADC (0-8191)
-uint16_t sensorBrightnessDayLevel = 4096; //ESP32 has 12-bit ADC (0-4095); ESP32-S2 has 13-bit ADC (0-8191)
-#endif
+uint16_t sensorBrightnessNightLevel = 0;
+uint16_t sensorBrightnessDayLevel = 255 * ADC_STEP_FOR_BYTE;
 
 const uint16_t DELAY_SENSOR_BRIGHTNESS_UPDATE_CHECK = 100;
 const double SENSOR_BRIGHTNESS_LEVEL_HYSTERESIS = 0.10;
