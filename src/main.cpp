@@ -466,6 +466,7 @@ void loadEepromData() {
     if( sensorBrightnessDayLevel >= ADC_NUMBER_OF_VALUES ) sensorBrightnessDayLevel = ADC_NUMBER_OF_VALUES - 1;
     readEepromUint16Value( eepromSensorBrightnessNightLevelIndex, sensorBrightnessNightLevel, true );
     if( sensorBrightnessNightLevel >= ADC_NUMBER_OF_VALUES ) sensorBrightnessNightLevel = 0;
+    if( sensorBrightnessNightLevel > sensorBrightnessDayLevel ) sensorBrightnessNightLevel = sensorBrightnessDayLevel;
     readEepromUint8Value( eepromBrightnessSteepnessCoefficientIndex, brightnessSteepnessCoefficient, true );
     readEepromBoolValue( eepromIsSingleDigitHourShownIndex, isSingleDigitHourShown, true );
     readEepromBoolValue( eepromIsRotateDisplayIndex, isRotateDisplay, true );
