@@ -79,7 +79,7 @@ bool isEnergySavingMode = false;
 #define ADC_NUMBER_OF_VALUES ( 1 << ADC_RESOLUTION )
 #define ADC_STEP_FOR_BYTE ( ADC_NUMBER_OF_VALUES / ( 1 << ( 8 * sizeof( uint8_t ) ) ) )
 
-uint8_t EEPROM_FLASH_DATA_VERSION = 3; //change to next number when eeprom data format is changed. 255 is a reserved value: is set to 255 when: hard reset pin is at 3.3V (high); during factory reset procedure; when FW is loaded to a new device (EEPROM reads FF => 255)
+uint8_t EEPROM_FLASH_DATA_VERSION = 00 + 3; //change to next number when eeprom data format is changed. 255 is a reserved value: is set to 255 when: hard reset pin is at 3.3V (high); during factory reset procedure; when FW is loaded to a new device (EEPROM reads FF => 255)
 uint8_t eepromFlashDataVersion = EEPROM_FLASH_DATA_VERSION;
 const char* getFirmwareVersion() { const char* result =
 #include "fw_version.txt"
@@ -367,7 +367,7 @@ bool writeEepromUint8Value( const uint16_t& eepromIndex, uint8_t newValue ) {
   }
   if( eepromWritten ) {
     EEPROM.commit();
-    }
+  }
   return eepromWritten;
 }
 
@@ -592,10 +592,10 @@ void initInternalLed() {
 
 
 //time of day functionality
-const char* getTimeZone() { const char* result = "EET-2EEST,M3.5.0/3,M10.5.0/4"; return result; };
+const char* getTimeZone() { const char* result = "EET-2EEST,M3.5.0/3,M10.5.0/4"; return result; }; //Ukraine timezone
 
 void initTimeZone() {
-  setenv( "TZ", getTimeZone(), 1 ); //Ukraine timezone
+  setenv( "TZ", getTimeZone(), 1 );
   tzset();
 }
 
