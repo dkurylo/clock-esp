@@ -15,8 +15,13 @@
 
 #include <DNSServer.h> //for Captive Portal
 
+#ifdef ESP8266
 #include <NTPClientMod.h>
 #include <WiFiUdp.h>
+#else //ESP32 or ESP32S2
+#include <esp_sntp.h>
+#endif
+
 #include <EEPROM.h>
 #include <LittleFS.h>
 
@@ -112,6 +117,7 @@ const uint16_t DELAY_INTERNAL_LED_ANIMATION_HIGH = 200;
 //time settings
 const uint32_t DELAY_NTP_TIME_SYNC = 6 * 60 * 60 * 1000; //sync time every 6 hours
 const uint32_t DELAY_NTP_TIME_SYNC_RETRY = 2 * 60 * 60 * 1000; //sync time every 2 hours if regular sync fails
+const uint32_t DELAY_NTP_TIME_SYNC_AGGRESSIVE = 10 * 1000; //sync time every 10 seconds if regular sync fails
 bool isSlowSemicolonAnimation = false; //semicolon period, false = 60 blinks per minute; true = 30 blinks per minute
 const uint16_t DELAY_DISPLAY_ANIMATION = 20; //led animation speed, in ms
 
@@ -143,10 +149,10 @@ const double SENSOR_BRIGHTNESS_LEVEL_HYSTERESIS = 0.10;
 const uint16_t SENSOR_BRIGHTNESS_SUSTAINED_LEVEL_HYSTERESIS_OVERRIDE_MILLIS = 10000;
 
 //custom datetime settings (used when there is no internet connection)
+bool isNtpTimeSet = false;
 bool isCustomDateTimeSet = false;
 unsigned long customDateTimeReceivedAt = 0;
-unsigned long customDateTimePrevMillis = 0;
-unsigned long customDateTimeReceivedSeconds = 0;
+unsigned long customDateTimePrevReceivedMillis = 0;
 
 #ifdef ESP8266
 ESP8266WebServer wifiWebServer(80);
@@ -157,8 +163,14 @@ HTTPUpdateServer httpUpdater;
 #endif
 
 DNSServer dnsServer;
+
+#ifdef ESP8266
 WiFiUDP ntpUdp;
-NTPClient timeClient(ntpUdp);
+NTPClient timeClient( ntpUdp );
+#else //ESP32 or ESP32S2
+
+#endif
+
 //MD_MAX72XX display = MD_MAX72XX( MAX_HARDWARE_TYPE, MAX_DATA_PIN, MAX_CLK_PIN, MAX_CS_PIN, MAX_MAX_DEVICES );
 MD_MAX72XX display = MD_MAX72XX( MAX_HARDWARE_TYPE, MAX_CS_PIN, MAX_MAX_DEVICES );
 
@@ -336,7 +348,6 @@ bool writeEepromCharArray( const uint16_t& eepromIndex, char* newValue, uint8_t 
     EEPROM.write( i, newValue[i-eepromStartIndex] );
   }
   EEPROM.commit();
-  delay( 20 );
   return true;
 }
 
@@ -356,8 +367,7 @@ bool writeEepromUint8Value( const uint16_t& eepromIndex, uint8_t newValue ) {
   }
   if( eepromWritten ) {
     EEPROM.commit();
-    delay( 20 );
-  }
+    }
   return eepromWritten;
 }
 
@@ -380,7 +390,6 @@ bool writeEepromUint16Value( const uint16_t& eepromIndex, uint16_t newValue ) {
     }
     if( eepromWritten ) {
         EEPROM.commit();
-        delay(20);
     }
     return eepromWritten;
 }
@@ -401,7 +410,6 @@ bool writeEepromBoolValue( const uint16_t& eepromIndex, bool newValue ) {
   }
   if( eepromWritten ) {
     EEPROM.commit();
-    delay( 20 );
   }
   return eepromWritten;
 }
@@ -432,7 +440,6 @@ bool writeEepromFontData( bool doErase ) {
   }
   if( eepromWritten ) {
     EEPROM.commit();
-    delay( 20 );
   }
   return eepromWritten;
 }
@@ -584,55 +591,21 @@ void initInternalLed() {
 }
 
 
+//time of day functionality
+const char* getTimeZone() { const char* result = "EET-2EEST,M3.5.0/3,M10.5.0/4"; return result; };
+
+void initTimeZone() {
+  setenv( "TZ", getTimeZone(), 1 ); //Ukraine timezone
+  tzset();
+}
+
+
 //display functionality
 void forceDisplaySync() {
   isForceDisplaySync = true;
   isForceDisplaySyncDisplayRenderOverride = true;
 }
 
-
-//time of day functionality
-bool isWithinDstBoundaries( time_t dt ) {
-  struct tm *timeinfo = gmtime(&dt);
-
-  // Get the last Sunday of March in the current year
-  struct tm lastMarchSunday = {0};
-  lastMarchSunday.tm_year = timeinfo->tm_year;
-  lastMarchSunday.tm_mon = 2; // March (0-based)
-  lastMarchSunday.tm_mday = 31; // Last day of March
-  mktime(&lastMarchSunday);
-  while (lastMarchSunday.tm_wday != 0) { // 0 = Sunday
-    lastMarchSunday.tm_mday--;
-    mktime(&lastMarchSunday);
-  }
-  lastMarchSunday.tm_hour = 1;
-  lastMarchSunday.tm_min = 0;
-  lastMarchSunday.tm_sec = 0;
-
-  // Get the last Sunday of October in the current year
-  struct tm lastOctoberSunday = {0};
-  lastOctoberSunday.tm_year = timeinfo->tm_year;
-  lastOctoberSunday.tm_mon = 9; // October (0-based)
-  lastOctoberSunday.tm_mday = 31; // Last day of October
-  mktime(&lastOctoberSunday);
-  while (lastOctoberSunday.tm_wday != 0) { // 0 = Sunday
-    lastOctoberSunday.tm_mday--;
-    mktime(&lastOctoberSunday);
-  }
-  lastOctoberSunday.tm_hour = 1;
-  lastOctoberSunday.tm_min = 0;
-  lastOctoberSunday.tm_sec = 0;
-
-  // Convert the struct tm to time_t
-  time_t lastMarchSunday_t = mktime(&lastMarchSunday);
-  time_t lastOctoberSunday_t = mktime(&lastOctoberSunday);
-
-  // Check if the datetime is within the DST boundaries
-  return lastMarchSunday_t <= dt && dt < lastOctoberSunday_t;
-}
-
-
-//display functionality
 double displayCurrentBrightness = static_cast<double>(displayNightBrightness);
 double displayPreviousBrightness = -1.0;
 double sensorBrightnessAverage = -1.0;
@@ -978,36 +951,22 @@ void renderDisplayText( String hourStr, String minuteStr, String secondStr, bool
 }
 
 bool timeCanBeCalculated() {
-  return timeClient.isTimeSet() || isCustomDateTimeSet;
+  return isNtpTimeSet || isCustomDateTimeSet;
 }
 
 void calculateTimeToShow( String& hourStr, String& minuteStr, String& secondStr, bool isSingleDigitHourShownCurrently ) {
   if( timeCanBeCalculated() ) {
-    time_t dt = 0;
-    if( timeClient.isTimeSet() ) {
-      dt = timeClient.getEpochTime();
-    } else if( isCustomDateTimeSet ) {
-      unsigned long currentMillis = millis();
-      if( currentMillis >= customDateTimeReceivedAt && customDateTimePrevMillis < customDateTimeReceivedAt ) {
-        unsigned long wrappedSeconds = ULONG_MAX / 1000 + 1;
-        customDateTimeReceivedAt = customDateTimeReceivedAt - ( 1000 - ULONG_MAX % 1000 );
-        customDateTimeReceivedSeconds = customDateTimeReceivedSeconds + wrappedSeconds;
-      }
-      customDateTimePrevMillis = currentMillis;
-      unsigned long timeDiff = calculateDiffMillis( customDateTimeReceivedAt, currentMillis );
-      dt = customDateTimeReceivedSeconds + timeDiff / 1000;
-    }
+    time_t now;
+    time( &now );
 
-    struct tm* dtStruct = localtime(&dt);
-    uint8_t hour = dtStruct->tm_hour;
-    hour += isWithinDstBoundaries( dt ) ? 3 : 2;
-    if( hour >= 24 ) {
-      hour = hour - 24;
-    }
+    struct tm localTime;
+    localtime_r( &now, &localTime );
+
+    uint8_t hour = localTime.tm_hour;
     hourStr = ( hour < 10 ? ( isSingleDigitHourShownCurrently ? " " : "0" ) : "" ) + String( hour );
-    uint8_t minute = dtStruct->tm_min;
+    uint8_t minute = localTime.tm_min;
     minuteStr = ( minute < 10 ? "0" : "" ) + String( minute );
-    uint8_t second = dtStruct->tm_sec;
+    uint8_t second = localTime.tm_sec;
     secondStr = ( second < 10 ? "0" : "" ) + String( second );
   }
 }
@@ -1164,33 +1123,87 @@ void initPowerModePin() {
 
 
 //NTP functionality
-bool isTimeClientInitialised = false;
-unsigned long timeClientUpdatedMillis = 0;
-void initTimeClient() {
-  if( WiFi.isConnected() && !isTimeClientInitialised ) {
+#ifdef ESP8266
+
+#else //ESP32 or ESP32S2
+bool isSerialPrintNtpTimeSuccessPending = false;
+void ntpSyncCallback( struct timeval *tv ) {
+  previousMillisNtpStatusCheck = millis();
+
+  isNtpTimeSet = true;
+  isCustomDateTimeSet = false;
+  sntp_set_sync_interval( DELAY_NTP_TIME_SYNC );
+  isSerialPrintNtpTimeSuccessPending = true;
+}
+#endif
+
+
+bool isNtpClientInitialised = false;
+void initNtpClient() {
+  if( WiFi.isConnected() && !isNtpClientInitialised ) {
+    #ifdef ESP8266
     timeClient.setUpdateInterval( DELAY_NTP_TIME_SYNC );
     writeToSerial( F("Starting NTP client..."), false );
     timeClient.begin();
-    isTimeClientInitialised = true;
+    isNtpClientInitialised = true;
     writeToSerial( F(" done"), true );
+    #else //ESP32 or ESP32S2
+    sntp_set_time_sync_notification_cb( ntpSyncCallback );
+    sntp_set_sync_mode( SNTP_SYNC_MODE_IMMED );
+    writeToSerial( F("Starting NTP client..."), false );
+    configTime( 0, 0, "pool.ntp.org", "time.google.com" );
+    isNtpClientInitialised = true;
+    sntp_set_sync_interval( DELAY_NTP_TIME_SYNC_AGGRESSIVE );
+    initTimeZone();
+    writeToSerial( F(" done"), true );
+    #endif
   }
 }
 
+#ifdef ESP8266
+
+#else //ESP32 or ESP32S2
+void forceNtpSync() {
+    sntp_stop();
+    isNtpClientInitialised = false;
+    initNtpClient();
+}
+#endif
+
 void ntpProcessLoopTick() {
-  if( !WiFi.isConnected() ) return;
-  if( !isTimeClientInitialised ) {
-    initTimeClient();
+  #ifdef ESP8266
+
+  #else //ESP32 or ESP32S2
+  if( isSerialPrintNtpTimeSuccessPending ) {
+    isSerialPrintNtpTimeSuccessPending = false;
+    String hourStr, minuteStr, secondStr;
+    calculateTimeToShow( hourStr, minuteStr, secondStr, isSingleDigitHourShown );
+    struct timeval timeValue;
+    gettimeofday( &timeValue, NULL );
+    writeToSerial( String( F("NTP time sync completed. Time: ") ) + hourStr + ":" + minuteStr + ":" + secondStr + "." + timeValue.tv_usec / 1000, true );
   }
-  if( isTimeClientInitialised ) {
+  #endif
+
+  if( !WiFi.isConnected() ) return;
+  if( !isNtpClientInitialised ) {
+    initNtpClient();
+  }
+  if( isNtpClientInitialised ) {
     unsigned long currentMillis = millis();
+    #ifdef ESP8266
     if( calculateDiffMillis( previousMillisNtpStatusCheck, currentMillis ) >= 10 ) {
       NTPClient::Status ntpStatus = timeClient.update();
 
       if( ntpStatus == NTPClient::STATUS_SUCCESS_RESPONSE ) {
         timeClient.setUpdateInterval( DELAY_NTP_TIME_SYNC );
-        if( isCustomDateTimeSet ) {
-          isCustomDateTimeSet = false;
-        }
+
+        struct timeval newDateTime;
+        newDateTime.tv_sec  = timeClient.getEpochTime();
+        newDateTime.tv_usec = timeClient.getSubSeconds() * 1000;
+        settimeofday( &newDateTime, NULL );
+
+        isNtpTimeSet = true;
+        isCustomDateTimeSet = false;
 
         String hourStr, minuteStr, secondStr;
         calculateTimeToShow( hourStr, minuteStr, secondStr, isSingleDigitHourShown );
@@ -1203,6 +1216,12 @@ void ntpProcessLoopTick() {
       }
       previousMillisNtpStatusCheck = currentMillis;
     }
+    #else //ESP32 or ESP32S2
+    if( calculateDiffMillis( previousMillisNtpStatusCheck, currentMillis ) >= DELAY_NTP_TIME_SYNC + DELAY_NTP_TIME_SYNC_RETRY + DELAY_NTP_TIME_SYNC_AGGRESSIVE * 6 ) {
+      previousMillisNtpStatusCheck = previousMillisNtpStatusCheck + DELAY_NTP_TIME_SYNC_RETRY;
+      sntp_set_sync_interval( DELAY_NTP_TIME_SYNC_RETRY );
+    }
+    #endif
   }
 }
 
@@ -1210,7 +1229,7 @@ void ntpProcessLoopTick() {
 //data update helpers
 void forceRefreshData() {
   initVariables();
-  initTimeClient();
+  initNtpClient();
 }
 
 
@@ -1335,7 +1354,7 @@ void connectToWiFiSync() {
   uint8_t previousInternalLedStatus = getInternalLedStatus();
   while( true ) {
     setInternalLedStatus( HIGH );
-    delay( 500 );
+    delay( 250 );
     wl_status_t wifiStatus = WiFi.status();
     if( WiFi.isConnected() ) {
       writeToSerial( F(" done"), true );
@@ -1574,7 +1593,7 @@ void handleWebServerGet() {
     "graph.draw(true);"
   "});"
   "function dt(){"
-    "let ts=") ) + String( timeClient.isTimeSet() || ( isCustomDateTimeSet && calculateDiffMillis( customDateTimeReceivedAt, millis() ) <= DELAY_NTP_TIME_SYNC ) ) + String( F(";"
+    "let ts=") ) + String( isNtpTimeSet || ( isCustomDateTimeSet && calculateDiffMillis( customDateTimeReceivedAt, millis() ) <= DELAY_NTP_TIME_SYNC ) ) + String( F(";"
     "if(ts)return;"
     "fetch('/setdt?t='+Date.now().toString()).catch(e=>{"
     "});"
@@ -2356,9 +2375,14 @@ void handleWebServerSetDate() {
     unsigned long long dt = std::strtoull( dtStr.c_str(), &strPtr, 10 );
     isCustomDateTimeSet = true;
     unsigned long currentMillis = millis();
-    customDateTimeReceivedSeconds = dt / 1000;
     customDateTimeReceivedAt = currentMillis - ( dt % 1000 ); //align with second start
-    customDateTimePrevMillis = currentMillis - ( dt % 1000 ); //align with second start
+    customDateTimePrevReceivedMillis = currentMillis - ( dt % 1000 ); //align with second start
+
+    struct timeval newDateTime;
+    newDateTime.tv_sec  = dt / 1000;
+    newDateTime.tv_usec = 0;
+    settimeofday( &newDateTime, NULL );
+
     wifiWebServer.send( 200, getContentType( F("json") ), "\"" + dtStr + "\"" );
   } else {
     wifiWebServer.send( 404, getContentType( F("txt") ), F("Error: 't' parameter not populated or not an epoch time with millis") );
@@ -2397,9 +2421,8 @@ void handleWebServerGetReset() {
 
   writeEepromUint8Value( eepromFlashDataVersionIndex, 255 );
   EEPROM.commit();
-  delay( 20 );
 
-  delay( 500 );
+  delay( 200 );
   ESP.restart();
 }
 
@@ -2479,36 +2502,19 @@ void handleWebServerGetPing() {
 }
 
 void handleWebServerGetMonitor() {
-  time_t dt = 0;
-  if( timeCanBeCalculated() ) {
-    if( timeClient.isTimeSet() ) {
-      dt = timeClient.getEpochTime();
-    } else if( isCustomDateTimeSet ) {
-      unsigned long currentMillis = millis();
-      if( currentMillis >= customDateTimeReceivedAt && customDateTimePrevMillis < customDateTimeReceivedAt ) {
-        unsigned long wrappedSeconds = ULONG_MAX / 1000 + 1;
-        customDateTimeReceivedAt = customDateTimeReceivedAt - ( 1000 - ULONG_MAX % 1000 );
-        customDateTimeReceivedSeconds = customDateTimeReceivedSeconds + wrappedSeconds;
-      }
-      customDateTimePrevMillis = currentMillis;
-      unsigned long timeDiff = calculateDiffMillis( customDateTimeReceivedAt, currentMillis );
-      dt = customDateTimeReceivedSeconds + timeDiff / 1000;
-    }
-  }
-  struct tm *timeinfo = gmtime(&dt);
-
+  struct tm localTime;
   String hourStr, minuteStr, secondStr;
   if( timeCanBeCalculated() ) {
-    struct tm* dtStruct = localtime(&dt);
-    uint8_t hour = dtStruct->tm_hour;
-    hour += isWithinDstBoundaries( dt ) ? 3 : 2;
-    if( hour >= 24 ) {
-      hour = hour - 24;
-    }
+    time_t now;
+    time( &now );
+
+    localtime_r( &now, &localTime );
+
+    uint8_t hour = localTime.tm_hour;
     hourStr = ( hour < 10 ? "0" : "" ) + String( hour );
-    uint8_t minute = dtStruct->tm_min;
+    uint8_t minute = localTime.tm_min;
     minuteStr = ( minute < 10 ? "0" : "" ) + String( minute );
-    uint8_t second = dtStruct->tm_sec;
+    uint8_t second = localTime.tm_sec;
     secondStr = ( second < 10 ? "0" : "" ) + String( second );
   }
 
@@ -2551,14 +2557,13 @@ void handleWebServerGetMonitor() {
     "\t},\n"
     #endif
     "\t\"ram\": {\n"
-      "\t\t\"heap\": ") ) + String( ESP.getFreeHeap() );
+      "\t\t\"heap\": ") ) + String( ESP.getFreeHeap() ) + String( F(""
       #ifdef ESP8266
-      content = content + String( F(",\n"
-        "\t\t\"frag\": ") ) + String( ESP.getHeapFragmentation() ) + String( F("\n") );
+        ",\n"
+        "\t\t\"frag\": ") ) + String( ESP.getHeapFragmentation() ) + String( F("\n") ) + String( F(""
       #else
-      content = content + String( F("\n") );
+        "\n"
       #endif
-      content = content + String( F(""
     "\t},\n"
     "\t\"cpu\": {\n"
       "\t\t\"chip\": \"") ) +
@@ -2576,9 +2581,15 @@ void handleWebServerGetMonitor() {
       "\t\t\"millis\": ") ) + String( millis() ) + String( F("\n"
     "\t},\n"
     "\t\"clock\": {\n"
-      "\t\t\"date\": ") ) + ( timeCanBeCalculated() ? ( String( F( "\"" ) ) + String( timeinfo->tm_year + 1900 ) + String( F( "/" ) ) + String( ( timeinfo->tm_mon < 9 ? String( F( "0" ) ) : String( F( "" ) ) ) + String( timeinfo->tm_mon + 1 ) ) + String( F( "/" ) ) + String( ( timeinfo->tm_mday < 10 ?  String( F( "0" ) ) : String( F( "" ) ) ) + String( timeinfo->tm_mday ) ) ) + String( F( "\"" ) ) : String( F( "null" ) ) ) + String( F(",\n"
+      "\t\t\"date\": ") ) + ( timeCanBeCalculated() ? ( String( F( "\"" ) ) + String( localTime.tm_year + 1900 ) + String( F( "/" ) ) + String( ( localTime.tm_mon < 9 ? String( F( "0" ) ) : String( F( "" ) ) ) + String( localTime.tm_mon + 1 ) ) + String( F( "/" ) ) + String( ( localTime.tm_mday < 10 ?  String( F( "0" ) ) : String( F( "" ) ) ) + String( localTime.tm_mday ) ) ) + String( F( "\"" ) ) : String( F( "null" ) ) ) + String( F(",\n"
       "\t\t\"time\": ") ) + ( timeCanBeCalculated() ? ( String( F( "\"" ) ) + hourStr + String( F( ":" ) ) + minuteStr + String( F( ":" ) ) + secondStr + String( F( "\"" ) ) ) : String( F( "null" ) ) ) + String( F(",\n"
-      "\t\t\"ntp\": ") ) + ( timeCanBeCalculated() ? ( String( F( "" ) ) + ( timeClient.isTimeSet() ? String( timeClient.getLastUpdateMillis() ) : String( customDateTimeReceivedAt ) ) + String( F( "" ) ) ) : "null" ) + String( F("\n"
+      "\t\t\"millis\": ") ) + ( timeCanBeCalculated() ? ( String( F( "" ) ) + ( isNtpTimeSet ? String(
+        #ifdef ESP8266
+        timeClient.getLastUpdateMillis()
+        #else
+        previousMillisNtpStatusCheck
+        #endif
+      ) : String( customDateTimeReceivedAt ) ) + String( F( "" ) ) ) : "null" ) + String( F("\n"
     "\t}\n"
   "}" ) );
   wifiWebServer.send( 200, getContentType( F("json") ), content );
@@ -3052,7 +3063,8 @@ void setup() {
   #endif
   connectToWiFiAsync( true );
   startWebServer();
-  initTimeClient();
+  initNtpClient();
+  initTimeZone();
 }
 
 
@@ -3111,33 +3123,28 @@ void loop() {
   ntpProcessLoopTick();
 
   currentMillis = millis();
-  if( isFirstLoopRun || isForceDisplaySync || ( calculateDiffMillis( previousMillisDisplayAnimation, currentMillis ) >= DELAY_DISPLAY_ANIMATION ) ) {
+  if( ( isFirstLoopRun && !isForceDisplaySync ) || isForceDisplaySync || ( calculateDiffMillis( previousMillisDisplayAnimation, currentMillis ) >= DELAY_DISPLAY_ANIMATION ) ) {
     bool doRenderDisplay = true;
     if( isForceDisplaySync ) {
+      unsigned long epochTimeSeconds = 0;
+      int epochTimeMillis = 0;
       if( timeCanBeCalculated() ) {
-        unsigned long timeClientSecondsCurrent = 0;
-        int timeClientSubSecondsCurrent = 0;
-        if( timeClient.isTimeSet() ) {
-          timeClientSecondsCurrent = timeClient.getEpochTime();
-          timeClientSubSecondsCurrent = timeClient.getSubSeconds();
-        } else if( isCustomDateTimeSet ) {
-          timeClientSecondsCurrent = customDateTimeReceivedSeconds + calculateDiffMillis( customDateTimeReceivedAt, currentMillis ) / 1000;
-          timeClientSubSecondsCurrent = calculateDiffMillis( customDateTimeReceivedAt, currentMillis ) % 1000;
-        }
-        bool shouldSemicolonBeShown = isSlowSemicolonAnimation ? ( timeClientSecondsCurrent % 2 == 0 ) : ( timeClientSubSecondsCurrent < 500 );
-        if( isSemicolonShown == shouldSemicolonBeShown ) {
-          doRenderDisplay = false;
-        }
-        isSemicolonShown = shouldSemicolonBeShown;
-        previousMillisSemicolonAnimation = currentMillis - ( isSlowSemicolonAnimation ? ( timeClientSubSecondsCurrent % 1000 ) : ( timeClientSubSecondsCurrent % 500 ) );
-        previousMillisDisplayAnimation = currentMillis - timeClientSubSecondsCurrent % DELAY_DISPLAY_ANIMATION;
-        isForceDisplaySync = false;
+        struct timeval timeValue;
+        gettimeofday( &timeValue, NULL );
+        epochTimeSeconds = timeValue.tv_sec;
+        epochTimeMillis = timeValue.tv_usec / 1000;
       } else {
-        isSemicolonShown = !isSemicolonShown;
-        previousMillisSemicolonAnimation = currentMillis;
-        previousMillisDisplayAnimation = currentMillis;
-        isForceDisplaySync = false;
+        epochTimeSeconds = currentMillis / 1000;
+        epochTimeMillis = currentMillis % 1000;
       }
+      bool shouldSemicolonBeShown = isSlowSemicolonAnimation ? ( epochTimeSeconds % 2 == 0 ) : ( epochTimeMillis < 500 );
+      if( isSemicolonShown == shouldSemicolonBeShown ) {
+        doRenderDisplay = false;
+      }
+      isSemicolonShown = shouldSemicolonBeShown;
+      previousMillisSemicolonAnimation = currentMillis - ( isSlowSemicolonAnimation ? ( epochTimeMillis % 1000 ) : ( epochTimeMillis % 500 ) );
+      previousMillisDisplayAnimation = currentMillis - epochTimeMillis % DELAY_DISPLAY_ANIMATION;
+      isForceDisplaySync = false;
     } else {
       previousMillisDisplayAnimation += DELAY_DISPLAY_ANIMATION;
       if( calculateDiffMillis( previousMillisSemicolonAnimation, currentMillis ) >= ( isSlowSemicolonAnimation ? 1000 : 500 ) ) {
