@@ -1560,7 +1560,7 @@ void handleWebServerGet() {
   wifiWebServer.sendContent( content );
   content = "";
 
-  //5700
+  //5600
   content += String( F(
 "<script>"
   "let devnm=\"" ) ) + String( deviceName ) + String( F("\";"
@@ -1598,8 +1598,16 @@ void handleWebServerGet() {
     "fetch('/setdt?t='+Date.now().toString()).catch(e=>{"
     "});"
   "}"
+  "let pvTimer=null;"
+  "let pvAbort=null;"
   "function pv(){"
-    "fetch('/preview?f='+document.querySelector('#") ) + HTML_PAGE_FONT_TYPE_NAME + String( F("').value+'&b='+(document.querySelector('#") ) + HTML_PAGE_BOLD_FONT_NAME + String( F("').checked?'1':'0')+'&s='+(document.querySelector('#") ) + HTML_PAGE_SHOW_SECS_NAME + String( F("').checked?'1':'0')+'&z='+(document.querySelector('#") ) + HTML_PAGE_SHOW_SINGLE_DIGIT_HOUR_NAME + String( F("').checked?'1':'0')+'&c='+(document.querySelector('#") ) + HTML_PAGE_COMPACT_LAYOUT_NAME + String( F("').checked?'1':'0')).then(res=>{"
+    "if(pvAbort)pvAbort.abort();"
+    "pvAbort=new AbortController();"
+    "const timeout=setTimeout(()=>pvAbort.abort(),10000);"
+    "fetch("
+      "'/preview?f='+document.querySelector('#") ) + HTML_PAGE_FONT_TYPE_NAME + String( F("').value+'&b='+(document.querySelector('#") ) + HTML_PAGE_BOLD_FONT_NAME + String( F("').checked?'1':'0')+'&s='+(document.querySelector('#") ) + HTML_PAGE_SHOW_SECS_NAME + String( F("').checked?'1':'0')+'&z='+(document.querySelector('#") ) + HTML_PAGE_SHOW_SINGLE_DIGIT_HOUR_NAME + String( F("').checked?'1':'0')+'&c='+(document.querySelector('#") ) + HTML_PAGE_COMPACT_LAYOUT_NAME + String( F("').checked?'1':'0'),"
+      "{signal:pvAbort.signal}"
+    ").then(res=>{"
       "return res.ok?res.json():[];"
     "}).then(dt=>{"
       "document.querySelector('#exdw').innerHTML=(()=>{"
@@ -1612,7 +1620,11 @@ void handleWebServerGet() {
         "}).join('');"
       "})();"
     "}).catch(e=>{"
+    "}).finally(()=>{"
+      "clearTimeout(timeout);"
     "});"
+    "if(pvTimer)clearTimeout(pvTimer);"
+    "pvTimer=setTimeout(pv,15000);"
   "}"
   "function ex(el){"
     "Array.from(el.parentElement.parentElement.children).forEach(ch=>{"
@@ -1792,6 +1804,14 @@ void handleWebServerGet() {
       "ell.textContent=Math.round(p.cv);"
     "}"
   "};" //graph end
+"</script>"
+  ) );
+  wifiWebServer.sendContent( content );
+  content = "";
+
+  //5600
+  content += String( F(
+"<script>"
   "function sanitize(i){"
     "let v=i.value,nv='',b=0,max=i.maxLength,c=i.selectionStart,nc=c;"
     "while(v.startsWith(' ')||v.startsWith('-')){"
@@ -1815,12 +1835,6 @@ void handleWebServerGet() {
     "i.setSelectionRange(nc,nc);"
   "}"
 "</script>"
-  ) );
-  wifiWebServer.sendContent( content );
-  content = "";
-
-  //5200
-  content += String( F(
 "<form method=\"POST\">"
   "<div class=\"fx fxsect\">"
     "<div class=\"fxh\">"
